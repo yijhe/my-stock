@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>股票盈虧簿・個人證券損益紀錄</title>
+<title>股票紀錄・個人證券損益紀錄</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -12,28 +12,28 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
-    --cover:#0B4F3C;
-    --cover-dark:#083b2c;
-    --brass:#A9812F;
-    --brass-light:#C9A24E;
-    --paper:#F5EFE2;
-    --paper-line:#DED0AE;
-    --card:#FBF8F0;
+    --cover:#2E7FB8;
+    --cover-dark:#1E5F8F;
+    --brass:#C08A2E;
+    --brass-light:#E0B14A;
+    --paper:#FDF1CE;
+    --paper-line:#EDD79A;
+    --card:#FFFBEF;
     --ink:#2B2620;
-    --ink-soft:#6B6153;
+    --ink-soft:#7A6E4E;
     --red:#B3261E;
     --green:#1E7145;
-    --flat:#7A7365;
-    --border:#E4D8B8;
-    --shadow: 0 10px 30px -12px rgba(43,38,32,0.35);
+    --flat:#8A7F63;
+    --border:#EDD9A0;
+    --shadow: 0 10px 30px -12px rgba(43,38,32,0.28);
     --radius: 10px;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;}
   body{
     background:
-      radial-gradient(circle at 20% 10%, rgba(11,79,60,0.05), transparent 40%),
-      radial-gradient(circle at 90% 80%, rgba(169,129,47,0.06), transparent 45%),
+      radial-gradient(circle at 20% 10%, rgba(46,127,184,0.07), transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(192,138,46,0.08), transparent 45%),
       var(--paper);
     color:var(--ink);
     font-family:'Noto Sans TC', sans-serif;
@@ -68,13 +68,16 @@
   .cover-title{display:flex; align-items:center; gap:14px;}
   .cover-mark{
     width:46px; height:46px; border-radius:50%;
-    border:2px solid rgba(239,233,216,0.55);
+    background:var(--paper);
+    border:2px solid rgba(255,255,255,0.6);
     display:flex; align-items:center; justify-content:center;
-    font-family:'Noto Serif TC',serif; font-weight:700; font-size:20px;
     flex-shrink:0;
+    box-shadow:0 3px 8px rgba(0,0,0,0.18);
+    color:var(--red);
   }
+  .cover-mark svg{ width:24px; height:24px; }
   .cover-title h1{font-size:22px; letter-spacing:1px; font-weight:700;}
-  .cover-sub{margin:4px 0 0; font-size:12.5px; color:#C9D9CE; letter-spacing:.5px;}
+  .cover-sub{margin:4px 0 0; font-size:12.5px; color:rgba(255,255,255,0.75); letter-spacing:.5px;}
   .cover-actions{display:flex; gap:8px; padding-bottom:4px; flex-wrap:wrap;}
   .btn-ghost-cover{
     background:rgba(239,233,216,0.08);
@@ -90,7 +93,7 @@
   }
   .acc-tab{
     flex:0 0 auto;
-    background:rgba(245,239,226,0.92);
+    background:rgba(253,241,206,0.92);
     color:var(--ink);
     border:none; border-top:3px solid var(--brass);
     padding:9px 16px 8px; border-radius:8px 8px 0 0;
@@ -190,7 +193,7 @@
   tbody tr:hover{background:rgba(169,129,47,0.06);}
   td.num, th.num{text-align:right; font-family:'IBM Plex Mono',monospace;}
   .badge{display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:.3px;}
-  .badge-stock{background:#E4EDE8; color:var(--cover);}
+  .badge-stock{background:#DCEBF5; color:var(--cover);}
   .badge-etf{background:#F3E7C9; color:#7A5C15;}
   .badge-buy{background:#FCE4E1; color:var(--red);}
   .badge-sell{background:#E1EFE6; color:var(--green);}
@@ -283,9 +286,14 @@
   <header class="cover">
     <div class="cover-inner">
       <div class="cover-title">
-        <div class="cover-mark">帳</div>
+        <div class="cover-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3,17 9,11 13,15 21,5"></polyline>
+            <polyline points="14,5 21,5 21,12"></polyline>
+          </svg>
+        </div>
         <div>
-          <h1>股票盈虧簿</h1>
+          <h1>股票紀錄</h1>
           <p class="cover-sub">個人證券損益紀錄・多帳戶管理</p>
         </div>
       </div>
@@ -326,7 +334,7 @@
 
 /* ============================= STORAGE ============================= */
 const STORAGE_KEY = 'stockLedgerApp_v1';
-const PALETTE = ['#0B4F3C','#A9812F','#7A3B3B','#2B4C7E','#6B4E9C','#3B6E71','#8A5A2B','#4A5D23'];
+const PALETTE = ['#2E7FB8','#D4A72C','#7A3B3B','#2B4C7E','#6B4E9C','#4A6FA5','#8A5A2B','#B5657A'];
 
 function defaultState(){
   return {
@@ -704,7 +712,7 @@ function stampToast(msg, isError){
   const root = document.getElementById('toastRoot');
   const el = document.createElement('div');
   el.className = 'toast';
-  if(isError) el.style.borderColor = '#7A7365';
+  if(isError) el.style.borderColor = '#8A7F63';
   el.innerHTML = `<span class="chop-ring">${isError?'!':'印'}</span><span>${esc(msg)}</span>`;
   root.appendChild(el);
   setTimeout(()=>{ el.remove(); }, 2300);
@@ -826,12 +834,12 @@ function renderDashboard(){
   if(d.rows.length && typeof Chart!=='undefined'){
     const ctx2 = document.getElementById('allocChart');
     if(allocChartInst) allocChartInst.destroy();
-    const colors = ['#0B4F3C','#A9812F','#B3261E','#2B4C7E','#6B4E9C','#3B6E71','#8A5A2B','#C9A24E','#4A5D23','#7A3B3B'];
+    const colors = ['#2E7FB8','#A9812F','#B3261E','#2B4C7E','#6B4E9C','#C97B3D','#8A5A2B','#C9A24E','#B5657A','#7A3B3B'];
     allocChartInst = new Chart(ctx2, {
       type:'doughnut',
       data:{
         labels: d.rows.map(r=>r.symbol+' '+r.name),
-        datasets:[{ data: d.rows.map(r=>Math.round(r.mv||r.cost)), backgroundColor: colors, borderColor:'#FBF8F0', borderWidth:2 }]
+        datasets:[{ data: d.rows.map(r=>Math.round(r.mv||r.cost)), backgroundColor: colors, borderColor:'#FFFBEF', borderWidth:2 }]
       },
       options:{
         responsive:true, maintainAspectRatio:false,
@@ -1844,7 +1852,7 @@ function exportData(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `股票盈虧簿備份_${todayStr()}.json`;
+  a.download = `股票紀錄備份_${todayStr()}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
