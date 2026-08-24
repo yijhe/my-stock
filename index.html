@@ -1,0 +1,1975 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>股票盈虧簿・個人證券損益紀錄</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --cover:#0B4F3C;
+    --cover-dark:#083b2c;
+    --brass:#A9812F;
+    --brass-light:#C9A24E;
+    --paper:#F5EFE2;
+    --paper-line:#DED0AE;
+    --card:#FBF8F0;
+    --ink:#2B2620;
+    --ink-soft:#6B6153;
+    --red:#B3261E;
+    --green:#1E7145;
+    --flat:#7A7365;
+    --border:#E4D8B8;
+    --shadow: 0 10px 30px -12px rgba(43,38,32,0.35);
+    --radius: 10px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(circle at 20% 10%, rgba(11,79,60,0.05), transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(169,129,47,0.06), transparent 45%),
+      var(--paper);
+    color:var(--ink);
+    font-family:'Noto Sans TC', sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+    padding-bottom:60px;
+  }
+  h1,h2,h3,h4{font-family:'Noto Serif TC', serif; margin:0;}
+  .mono{font-family:'IBM Plex Mono','Noto Sans TC',monospace;}
+  button{font-family:inherit; cursor:pointer;}
+  input,select,textarea{font-family:inherit;}
+
+  /* ===== Cover / header ===== */
+  .cover{
+    background:linear-gradient(160deg, var(--cover) 0%, var(--cover-dark) 100%);
+    color:#EFE9D8;
+    padding:22px 20px 0 20px;
+    box-shadow: var(--shadow);
+    position:relative;
+  }
+  .cover::after{
+    content:"";
+    position:absolute; left:0; right:0; bottom:0; height:6px;
+    background:repeating-linear-gradient(90deg, var(--brass-light) 0 10px, transparent 10px 20px);
+    opacity:.55;
+  }
+  .cover-inner{
+    max-width:1040px; margin:0 auto;
+    display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap;
+    padding-bottom:16px;
+  }
+  .cover-title{display:flex; align-items:center; gap:14px;}
+  .cover-mark{
+    width:46px; height:46px; border-radius:50%;
+    border:2px solid rgba(239,233,216,0.55);
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Noto Serif TC',serif; font-weight:700; font-size:20px;
+    flex-shrink:0;
+  }
+  .cover-title h1{font-size:22px; letter-spacing:1px; font-weight:700;}
+  .cover-sub{margin:4px 0 0; font-size:12.5px; color:#C9D9CE; letter-spacing:.5px;}
+  .cover-actions{display:flex; gap:8px; padding-bottom:4px; flex-wrap:wrap;}
+  .btn-ghost-cover{
+    background:rgba(239,233,216,0.08);
+    border:1px solid rgba(239,233,216,0.35);
+    color:#EFE9D8; padding:7px 12px; border-radius:20px; font-size:12.5px;
+    transition:.15s;
+  }
+  .btn-ghost-cover:hover{background:rgba(239,233,216,0.18);}
+
+  .tabs-account{
+    max-width:1040px; margin:0 auto; display:flex; gap:6px; overflow-x:auto;
+    padding:0 2px; scrollbar-width:thin;
+  }
+  .acc-tab{
+    flex:0 0 auto;
+    background:rgba(245,239,226,0.92);
+    color:var(--ink);
+    border:none; border-top:3px solid var(--brass);
+    padding:9px 16px 8px; border-radius:8px 8px 0 0;
+    font-size:13px; font-weight:500;
+    display:flex; align-items:center; gap:6px;
+    position:relative; top:1px;
+    opacity:.72;
+  }
+  .acc-tab.active{opacity:1; background:var(--paper); font-weight:700; box-shadow:0 -2px 6px rgba(0,0,0,0.08);}
+  .acc-tab .dot{width:8px; height:8px; border-radius:50%; flex-shrink:0;}
+  .acc-tab-add{
+    flex:0 0 auto; background:transparent; border:1px dashed rgba(239,233,216,0.5);
+    color:#EFE9D8; padding:8px 14px; border-radius:8px 8px 0 0; font-size:13px; margin-bottom:1px;
+  }
+
+  /* ===== Page ===== */
+  .page{max-width:1040px; margin:0 auto; padding:0 20px;}
+  .card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  /* Dashboard */
+  .dashboard{margin-top:18px;}
+  .dash-card{padding:18px 20px 8px;}
+  .dash-grid{
+    display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:0; margin-top:6px;
+  }
+  .dash-item{
+    padding:12px 14px 14px 0;
+    border-right:1px dotted var(--paper-line);
+  }
+  .dash-item:last-child{border-right:none;}
+  .dash-label{font-size:11.5px; color:var(--ink-soft); letter-spacing:.5px; display:flex; align-items:center; gap:5px;}
+  .dash-value{font-family:'IBM Plex Mono',monospace; font-size:19px; font-weight:600; margin-top:4px;}
+  .dash-sub{font-size:11px; color:var(--ink-soft); margin-top:2px; font-family:'IBM Plex Mono',monospace;}
+  .pl-pos{color:var(--red);}
+  .pl-neg{color:var(--green);}
+  .pl-flat{color:var(--flat);}
+  .charts-row{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; padding:6px 20px 20px;}
+  @media (max-width:720px){.charts-row{grid-template-columns:1fr;}}
+  .chart-box{background:var(--paper); border:1px solid var(--border); border-radius:8px; padding:12px; position:relative; height:220px;}
+  .chart-box h4{font-size:12.5px; color:var(--ink-soft); font-weight:600; margin-bottom:6px;}
+  .empty-note{font-size:12px; color:var(--ink-soft); text-align:center; padding-top:60px;}
+
+  /* Section tabs */
+  .tabs-section{
+    display:flex; gap:4px; margin-top:22px; border-bottom:2px solid var(--border);
+    overflow-x:auto;
+  }
+  .tabs-section button{
+    background:transparent; border:none; padding:10px 16px; font-size:13.5px; font-weight:600;
+    color:var(--ink-soft); border-radius:8px 8px 0 0; white-space:nowrap;
+    border-bottom:2px solid transparent; margin-bottom:-2px;
+  }
+  .tabs-section button.active{color:var(--cover); border-bottom:2px solid var(--brass); background:var(--card);}
+
+  .panel{padding:18px 0 40px;}
+  .panel-head{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:12px;}
+  .panel-head h3{font-size:16px;}
+  .panel-tools{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+
+  .btn-stamp{
+    background:var(--card); border:2px solid var(--red); color:var(--red);
+    padding:8px 16px; border-radius:22px; font-weight:700; font-size:13px; letter-spacing:.5px;
+    transition:.15s;
+  }
+  .btn-stamp:hover{background:var(--red); color:#fff;}
+  .btn-stamp-loss{
+    background:var(--card); border:2px solid var(--green); color:var(--green);
+    padding:8px 16px; border-radius:22px; font-weight:700; font-size:13px; letter-spacing:.5px;
+    transition:.15s;
+  }
+  .btn-stamp-loss:hover{background:var(--green); color:#fff;}
+  .btn-secondary{background:var(--paper); border:1px solid var(--border); color:var(--ink); padding:8px 14px; border-radius:22px; font-size:13px;}
+  .btn-secondary:hover{background:#EFE4C6;}
+  .btn-danger{background:var(--red); color:#fff; border:none; padding:8px 16px; border-radius:22px; font-size:13px; font-weight:600;}
+  .btn-text{background:none; border:none; color:var(--brass); font-size:12.5px; text-decoration:underline; padding:2px 4px;}
+  .btn-icon{background:none; border:none; font-size:14px; padding:3px 6px; color:var(--ink-soft); border-radius:6px;}
+  .btn-icon:hover{background:var(--paper);}
+  select.input-sel, input.input-txt{
+    border:1px solid var(--border); background:var(--paper); border-radius:6px; padding:7px 10px; font-size:13px; color:var(--ink);
+  }
+
+  /* Table (ledger style) */
+  .ledger-wrap{overflow-x:auto; border-radius:var(--radius); border:1px solid var(--border); background:var(--card);}
+  table{width:100%; border-collapse:collapse; font-size:13px; min-width:640px;}
+  thead th{
+    text-align:left; font-weight:600; color:var(--ink-soft); font-size:11.5px; letter-spacing:.4px;
+    padding:10px 12px; border-bottom:2px solid var(--border); background:var(--paper); white-space:nowrap;
+  }
+  tbody td{padding:10px 12px; border-bottom:1px dotted var(--paper-line); vertical-align:middle; white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:rgba(169,129,47,0.06);}
+  td.num, th.num{text-align:right; font-family:'IBM Plex Mono',monospace;}
+  .badge{display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:20px; font-weight:600; letter-spacing:.3px;}
+  .badge-stock{background:#E4EDE8; color:var(--cover);}
+  .badge-etf{background:#F3E7C9; color:#7A5C15;}
+  .badge-buy{background:#FCE4E1; color:var(--red);}
+  .badge-sell{background:#E1EFE6; color:var(--green);}
+  .acc-chip{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; color:var(--ink-soft);}
+  .acc-chip .dot{width:7px;height:7px;border-radius:50%;}
+
+  .empty-state{
+    text-align:center; padding:44px 20px; color:var(--ink-soft);
+  }
+  .empty-state .glyph{font-size:30px; margin-bottom:8px; opacity:.6;}
+  .empty-state p{font-size:13px; margin:4px 0 14px;}
+
+  /* Modal */
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(20,18,14,0.5); backdrop-filter:blur(1px);
+    display:flex; align-items:center; justify-content:center; z-index:100; padding:16px;
+    animation: fadeIn .15s ease;
+  }
+  @keyframes fadeIn{from{opacity:0;} to{opacity:1;}}
+  .modal-card{
+    background:var(--card); width:100%; max-width:480px; border-radius:12px; box-shadow:0 24px 60px rgba(0,0,0,0.35);
+    max-height:88vh; overflow-y:auto; position:relative; animation: slideUp .18s ease;
+  }
+  @keyframes slideUp{from{transform:translateY(14px); opacity:0;} to{transform:translateY(0); opacity:1;}}
+  .modal-tear{
+    height:10px; width:100%;
+    background-image: radial-gradient(circle at 10px 0, transparent 5px, var(--card) 5.5px);
+    background-size:20px 10px; background-repeat:repeat-x;
+  }
+  .modal-head{display:flex; align-items:center; justify-content:space-between; padding:4px 20px 12px; border-bottom:1px dotted var(--paper-line);}
+  .modal-head h3{font-size:16px;}
+  .modal-close{background:none; border:none; font-size:16px; color:var(--ink-soft); padding:4px;}
+  .modal-body{padding:16px 20px 20px;}
+  .form-row{margin-bottom:12px;}
+  .form-row label{display:block; font-size:12px; color:var(--ink-soft); margin-bottom:5px; font-weight:600;}
+  .form-row input, .form-row select, .form-row textarea{
+    width:100%; padding:9px 11px; border:1px solid var(--border); border-radius:7px; background:var(--paper); font-size:13.5px; color:var(--ink);
+  }
+  .form-row textarea{resize:vertical; min-height:50px;}
+  .form-grid2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .form-hint{font-size:11px; color:var(--ink-soft); margin-top:4px;}
+  .form-toggle{display:flex; gap:0; border:1px solid var(--border); border-radius:7px; overflow:hidden;}
+  .form-toggle button{flex:1; padding:9px; background:var(--paper); border:none; font-size:13px; font-weight:600; color:var(--ink-soft);}
+  .form-toggle button.on{background:var(--cover); color:#fff;}
+  .form-toggle button.on.sell{background:var(--green);}
+  .form-toggle button.on.profit{background:var(--red);}
+  .form-toggle button.on.loss{background:var(--green);}
+  .modal-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:16px;}
+  .confirm-msg{font-size:13.5px; line-height:1.6; color:var(--ink);}
+  .swatches{display:flex; gap:8px; flex-wrap:wrap;}
+  .swatch{width:26px; height:26px; border-radius:50%; border:2px solid transparent; cursor:pointer;}
+  .swatch.picked{border-color:var(--ink);}
+  .inline-check{display:flex; align-items:center; gap:7px; font-size:13px; color:var(--ink);}
+  .inline-check input{width:auto;}
+  .month-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:4px;}
+  .month-box{
+    display:flex; align-items:center; gap:5px; font-size:12.5px; color:var(--ink);
+    border:1px solid var(--border); border-radius:6px; padding:6px 8px; background:var(--paper);
+  }
+  .month-box input{width:auto;}
+
+  /* Toast / stamp */
+  #toastRoot{position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:200; display:flex; flex-direction:column; gap:8px; align-items:center;}
+  .toast{
+    display:flex; align-items:center; gap:9px;
+    background:var(--card); border:2px solid var(--red); color:var(--red);
+    padding:9px 18px; border-radius:24px; font-size:13px; font-weight:700;
+    box-shadow:0 10px 24px rgba(0,0,0,0.18);
+    animation: popIn .2s ease, fadeOut .3s ease 1.9s forwards;
+    transform:rotate(-2deg);
+  }
+  .toast .chop-ring{
+    width:18px; height:18px; border-radius:50%; border:2px solid var(--red);
+    display:flex; align-items:center; justify-content:center; font-size:9px;
+  }
+  @keyframes popIn{from{transform:scale(.7) rotate(-2deg); opacity:0;} to{transform:scale(1) rotate(-2deg); opacity:1;}}
+  @keyframes fadeOut{to{opacity:0; transform:translateY(6px) rotate(-2deg);}}
+
+  .footnote{font-size:11px; color:var(--ink-soft); text-align:center; margin-top:26px; line-height:1.7;}
+
+  @media (max-width:600px){
+    .form-grid2{grid-template-columns:1fr;}
+    .dash-item{border-right:none; border-bottom:1px dotted var(--paper-line);}
+    .cover-title h1{font-size:19px;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="cover">
+    <div class="cover-inner">
+      <div class="cover-title">
+        <div class="cover-mark">帳</div>
+        <div>
+          <h1>股票盈虧簿</h1>
+          <p class="cover-sub">個人證券損益紀錄・多帳戶管理</p>
+        </div>
+      </div>
+      <div class="cover-actions">
+        <button class="btn-ghost-cover" data-action="open-sync">☁ 同步設定</button>
+        <button class="btn-ghost-cover" data-action="export-data">⬇ 匯出備份</button>
+        <button class="btn-ghost-cover" data-action="trigger-import">⬆ 匯入備份</button>
+        <input type="file" id="fileImport" accept="application/json" hidden>
+        <button class="btn-ghost-cover" data-action="clear-local">🗑 清除本機資料</button>
+        <button class="btn-ghost-cover" data-action="clear-all">✕ 清除全部資料</button>
+      </div>
+    </div>
+    <div class="tabs-account" id="accountTabs"></div>
+  </header>
+
+  <main class="page">
+    <div id="dashboard"></div>
+
+    <nav class="tabs-section" id="sectionTabs">
+      <button data-tab="holdings">庫存股票</button>
+      <button data-tab="transactions">交易紀錄</button>
+      <button data-tab="dividends">配息紀錄</button>
+      <button data-tab="daily">每日盈虧</button>
+    </nav>
+
+    <section id="panelRoot" class="panel"></section>
+
+    <p class="footnote">資料僅儲存於此瀏覽器（localStorage），請定期使用「匯出備份」保存檔案。手續費／證交稅為試算參考，實際請以券商對帳單為準。</p>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================= STORAGE ============================= */
+const STORAGE_KEY = 'stockLedgerApp_v1';
+const PALETTE = ['#0B4F3C','#A9812F','#7A3B3B','#2B4C7E','#6B4E9C','#3B6E71','#8A5A2B','#4A5D23'];
+
+function defaultState(){
+  return {
+    accounts: [],
+    activeAccountId: 'all',
+    transactions: [],   // {id, accountId, date, symbol, name, category, action, shares, price, fee, tax, dayTrade, note, seq}
+    dividends: [],       // {id, accountId, date, symbol, name, perShare, shares, total, note}
+    priceLogs: [],        // {id, date, symbol, price}
+    holdingsMeta: [],     // {id, accountId, symbol, name, category, freq, expectedDate, note}
+    fundLogs: [],          // {id, accountId, date, ownAmount, marginAmount, note} - manually-entered snapshot of capital invested vs borrowed
+    repaymentLogs: [],     // {id, accountId, date, amount, note} - manually-entered per-period loan repayment record
+    dailyPLLogs: []        // {id, accountId, date, type:'profit'|'loss', amount, note} - manually-entered daily gain/loss, independent of computed holdings
+  };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return defaultState();
+    const parsed = JSON.parse(raw);
+    return Object.assign(defaultState(), parsed);
+  }catch(e){ console.error('load failed', e); return defaultState(); }
+}
+let state = loadState();
+let seqCounter = 1;
+
+function saveState(showStamp){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if(syncCode) pushStateToCloud();
+    if(showStamp!==false) stampToast(syncCode?'已儲存並同步':'已儲存');
+  }catch(e){
+    console.error(e);
+    stampToast('儲存失敗', true);
+  }
+}
+
+/* ============================= CLOUD SYNC (Firebase Firestore, no login, shared code) ============================= */
+// 1. 到 https://console.firebase.google.com 建立專案並啟用 Firestore
+// 2. 將下方 firebaseConfig 換成你專案的設定值（專案設定 > 一般 > 你的應用程式 > SDK 設定）
+// 3. Firestore 規則貼上（僅開放 stockLedgerSync 集合）：
+//    match /databases/{database}/documents {
+//      match /stockLedgerSync/{code} { allow read, write: if true; }
+//    }
+const firebaseConfig = {
+  apiKey: "AIzaSyBf9rljpzN7STtIllIr-Mo01snK3VKr8-c",
+  authDomain: "my-stock-fce75.firebaseapp.com",
+  projectId: "my-stock-fce75",
+  storageBucket: "my-stock-fce75.firebasestorage.app",
+  messagingSenderId: "744899348661",
+  appId: "1:744899348661:web:6d6f73527399ac0cd056fc"
+};
+function isFirebaseConfigured(){ return !!(firebaseConfig.apiKey && firebaseConfig.apiKey.indexOf('YOUR_')!==0); }
+
+const SYNC_CODE_KEY = 'stockLedgerSyncCode';
+const DEVICE_ID_KEY = 'stockLedgerDeviceId';
+function getDeviceId(){
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if(!id){ id = 'dev_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); localStorage.setItem(DEVICE_ID_KEY, id); }
+  return id;
+}
+function genSyncCode(){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+  let s = '';
+  for(let i=0;i<8;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+let deviceId = getDeviceId();
+let syncCode = localStorage.getItem(SYNC_CODE_KEY) || null;
+let syncStatus = 'offline'; // offline | connecting | connected | error
+let firebaseReady = false;
+let firestoreUnsub = null;
+
+function initFirebase(){
+  if(firebaseReady) return true;
+  if(typeof firebase==='undefined'){ return false; }
+  try{
+    if(!firebase.apps || firebase.apps.length===0) firebase.initializeApp(firebaseConfig);
+    firebaseReady = true;
+    return true;
+  }catch(e){ console.error('firebase init failed', e); return false; }
+}
+
+function startSync(code){
+  if(!isFirebaseConfigured()){ stampToast('尚未完成 Firebase 設定', true); return; }
+  if(firestoreUnsub){ firestoreUnsub(); firestoreUnsub=null; }
+  syncCode = code;
+  localStorage.setItem(SYNC_CODE_KEY, code);
+  if(!initFirebase()){ syncStatus='error'; stampToast('同步元件載入失敗，將於下次開啟時自動重試（請確認網路連線）', true); return; }
+  syncStatus = 'connecting';
+  try{
+    const db = firebase.firestore();
+    const docRef = db.collection('stockLedgerSync').doc(code);
+    firestoreUnsub = docRef.onSnapshot((snap)=>{
+      syncStatus = 'connected';
+      if(snap.exists){
+        const data = snap.data();
+        if(data.deviceId === deviceId) return; // skip echo of our own write
+        if(data.state){
+          try{
+            const parsed = JSON.parse(data.state);
+            state = Object.assign(defaultState(), parsed);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            render();
+            stampToast('已從雲端同步最新資料');
+          }catch(e){ console.error('parse remote state failed', e); }
+        }
+      } else {
+        pushStateToCloud();
+      }
+    }, (err)=>{
+      console.error('sync listen error', err);
+      syncStatus = 'error';
+    });
+  }catch(e){
+    console.error('startSync failed', e);
+    syncStatus = 'error';
+  }
+}
+
+function pushStateToCloud(){
+  if(!syncCode || !isFirebaseConfigured() || !initFirebase()) return;
+  try{
+    const db = firebase.firestore();
+    db.collection('stockLedgerSync').doc(syncCode).set({
+      state: JSON.stringify(state),
+      deviceId: deviceId,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(e=>console.error('push failed', e));
+  }catch(e){ console.error('push failed', e); }
+}
+
+function stopSync(){
+  if(firestoreUnsub){ firestoreUnsub(); firestoreUnsub=null; }
+  syncCode = null;
+  syncStatus = 'offline';
+  localStorage.removeItem(SYNC_CODE_KEY);
+}
+
+async function pullFromCloudOnce(){
+  if(!syncCode || !isFirebaseConfigured() || !initFirebase()) return false;
+  try{
+    const db = firebase.firestore();
+    const snap = await db.collection('stockLedgerSync').doc(syncCode).get();
+    if(snap.exists){
+      const data = snap.data();
+      if(data.state){
+        const parsed = JSON.parse(data.state);
+        state = Object.assign(defaultState(), parsed);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        return true;
+      }
+    }
+    return false;
+  }catch(e){ console.error('pull failed', e); return false; }
+}
+
+/* ============================= UTILS ============================= */
+function uid(){ return 'id_' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+function esc(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtMoney(n){
+  if(n==null || isNaN(n)) return '—';
+  const r = Math.round(n);
+  return (r<0?'-$':'$') + Math.abs(r).toLocaleString('en-US');
+}
+function fmtShares(n){
+  if(n==null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('en-US', {maximumFractionDigits:2});
+}
+function fmtPrice(n){
+  if(n==null || isNaN(n)) return '—';
+  return Number(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+function fmtPct(n){
+  if(n==null || !isFinite(n)) return '—';
+  return (n>=0?'+':'') + (n*100).toFixed(2) + '%';
+}
+function plClass(n){ if(n==null) return 'pl-flat'; return n>0?'pl-pos': n<0?'pl-neg':'pl-flat'; }
+function fmtDate(d){ if(!d) return '—'; return d; }
+
+function calcDefaultFee(shares, price, discount){
+  discount = discount==null?1:discount;
+  const amt = (shares||0)*(price||0);
+  if(amt<=0) return 0;
+  return Math.max(1, Math.round(amt*0.001425*discount));
+}
+function calcDefaultTax(shares, price, category, isDayTrade){
+  const amt = (shares||0)*(price||0);
+  if(amt<=0) return 0;
+  let rate = category==='etf' ? 0.001 : 0.003;
+  if(isDayTrade) rate = rate/2;
+  return Math.round(amt*rate);
+}
+
+/* ============================= ACCOUNT HELPERS ============================= */
+function getRealAccounts(){ return state.accounts; }
+function accountById(id){ return state.accounts.find(a=>a.id===id); }
+function activeIsAll(){ return state.activeAccountId==='all'; }
+
+function txForAccount(accountId){
+  if(accountId==='all') return state.transactions.slice();
+  return state.transactions.filter(t=>t.accountId===accountId);
+}
+function divForAccount(accountId){
+  if(accountId==='all') return state.dividends.slice();
+  return state.dividends.filter(d=>d.accountId===accountId);
+}
+function metaFor(accountId, symbol){
+  return state.holdingsMeta.find(m=>m.accountId===accountId && m.symbol===symbol);
+}
+function ensureMeta(accountId, symbol, name, category){
+  let m = metaFor(accountId, symbol);
+  if(!m){
+    m = {id:uid(), accountId, symbol, name:name||symbol, category:category||'stock', freq:'未設定', expectedDate:'', expectedMonths:[], note:''};
+    state.holdingsMeta.push(m);
+  } else if(name && m.name!==name){
+    m.name = name;
+  }
+  return m;
+}
+
+/* ============================= CORE CALC ============================= */
+// Replays transactions up to (and including) asOfDate using weighted-average cost method.
+function computeHoldingsAsOf(accountId, asOfDate){
+  const txs = txForAccount(accountId)
+    .filter(t=>t.date<=asOfDate)
+    .sort((a,b)=> a.date.localeCompare(b.date) || (a.seq||0)-(b.seq||0));
+  const map = {};
+  let cumRealized = 0;
+  for(const t of txs){
+    const key = t.accountId + '|' + t.symbol;
+    if(!map[key]) map[key] = {symbol:t.symbol, name:t.name, category:t.category, accountId:t.accountId, shares:0, cost:0};
+    const h = map[key];
+    if(t.action==='buy'){
+      h.shares += t.shares;
+      h.cost += t.shares*t.price + (t.fee||0);
+      if(t.name) h.name = t.name;
+      if(t.category) h.category = t.category;
+    } else if(t.action==='sell'){
+      const avg = h.shares>0 ? h.cost/h.shares : 0;
+      const sellShares = Math.min(t.shares, h.shares);
+      const soldCost = avg*sellShares;
+      const proceeds = sellShares*t.price - (t.fee||0) - (t.tax||0);
+      const realized = proceeds - soldCost;
+      cumRealized += realized;
+      h.cost = Math.max(0, h.cost - soldCost);
+      h.shares = Math.max(0, h.shares - sellShares);
+      if(h.shares < 0.0000001){ h.shares = 0; h.cost = 0; }
+    }
+  }
+  const holdings = Object.values(map).filter(h=>h.shares>0.0000001).map(h=>{
+    h.avgCost = h.shares>0 ? h.cost/h.shares : 0;
+    return h;
+  });
+  return {holdings, cumRealizedPL: cumRealized};
+}
+function computeHoldings(accountId){ return computeHoldingsAsOf(accountId, todayStr()); }
+
+function latestPrice(symbol, asOfDate){
+  const logs = state.priceLogs.filter(p=>p.symbol===symbol && p.date<=asOfDate);
+  if(logs.length===0) return null;
+  logs.sort((a,b)=>a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  return logs[logs.length-1].price;
+}
+
+function enrichHoldings(holdings, asOfDate){
+  let totalMV = 0, totalCost = 0, totalUnreal = 0;
+  const rows = holdings.map(h=>{
+    const price = latestPrice(h.symbol, asOfDate);
+    const cost = h.cost;
+    const mv = price!=null ? price*h.shares : null;
+    const unreal = mv!=null ? (mv - cost) : null;
+    const unrealPct = (mv!=null && cost>0) ? unreal/cost : null;
+    totalMV += (mv!=null? mv : cost);
+    totalCost += cost;
+    totalUnreal += (unreal!=null? unreal : 0);
+    const meta = metaFor(h.accountId, h.symbol);
+    return Object.assign({}, h, {price, cost, mv, unreal, unrealPct, meta});
+  });
+  rows.sort((a,b)=> (b.mv||b.cost) - (a.mv||a.cost));
+  return {rows, totalMV, totalCost, totalUnreal};
+}
+
+/* ---- Fund status: manually-entered snapshots of capital invested vs borrowed ---- */
+function fundLogsForAccount(accountId){
+  return state.fundLogs.filter(f=>f.accountId===accountId).sort((a,b)=> b.date.localeCompare(a.date));
+}
+function repaymentLogsForAccount(accountId){
+  if(accountId==='all') return state.repaymentLogs.slice().sort((a,b)=> b.date.localeCompare(a.date));
+  return state.repaymentLogs.filter(r=>r.accountId===accountId).sort((a,b)=> b.date.localeCompare(a.date));
+}
+function totalRepaid(accountId){
+  return repaymentLogsForAccount(accountId).reduce((s,r)=>s+(r.amount||0),0);
+}
+function latestFundStatus(accountId, asOfDate){
+  const logs = state.fundLogs.filter(f=>f.accountId===accountId && f.date<=asOfDate);
+  if(logs.length===0) return null;
+  logs.sort((a,b)=> a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  return logs[logs.length-1];
+}
+function aggregateFundStatus(asOfDate){
+  let own=0, margin=0, any=false;
+  state.accounts.forEach(a=>{
+    const l = latestFundStatus(a.id, asOfDate);
+    if(l){ any=true; own += (l.ownAmount||0); margin += (l.marginAmount||0); }
+  });
+  return any ? {ownAmount:own, marginAmount:margin} : null;
+}
+function fundStatusFor(accountId, asOfDate){
+  return accountId==='all' ? aggregateFundStatus(asOfDate) : latestFundStatus(accountId, asOfDate);
+}
+
+function computeDashboard(accountId){
+  const {holdings, cumRealizedPL} = computeHoldingsAsOf(accountId, todayStr());
+  const {rows, totalMV, totalCost, totalUnreal} = enrichHoldings(holdings, todayStr());
+  const divs = divForAccount(accountId);
+  const totalDiv = divs.reduce((s,d)=>s+(d.total||0),0);
+  const fundStatus = fundStatusFor(accountId, todayStr());
+  const totalPL = cumRealizedPL + totalUnreal + totalDiv;
+  const returnOnOwn = (fundStatus && fundStatus.ownAmount>0) ? totalPL/fundStatus.ownAmount : null;
+  return {rows, totalMV, totalCost, totalUnreal, cumRealizedPL, totalDiv, fundStatus, totalPL, returnOnOwn, totalRepaid: totalRepaid(accountId)};
+}
+
+function computeEquityCurve(accountId){
+  const txs = txForAccount(accountId);
+  const dateSet = new Set(txs.map(t=>t.date));
+  const relevantSymbols = new Set(txs.map(t=>t.symbol));
+  state.priceLogs.forEach(p=>{ if(relevantSymbols.has(p.symbol)) dateSet.add(p.date); });
+  divForAccount(accountId).forEach(d=>dateSet.add(d.date));
+  const dates = Array.from(dateSet).sort();
+  if(dates.length===0) return [];
+  const curve = dates.map(date=>{
+    const {holdings, cumRealizedPL} = computeHoldingsAsOf(accountId, date);
+    const {totalMV, totalCost} = enrichHoldings(holdings, date);
+    const unreal = totalMV - totalCost;
+    const divTotal = divForAccount(accountId).filter(d=>d.date<=date).reduce((s,d)=>s+(d.total||0),0);
+    const total = cumRealizedPL + unreal + divTotal;
+    return {date, total, cumRealizedPL, unreal, divTotal};
+  });
+  for(let i=0;i<curve.length;i++){
+    curve[i].dailyPL = i===0 ? curve[i].total : curve[i].total - curve[i-1].total;
+  }
+  return curve;
+}
+
+/* ============================= MODAL / TOAST ============================= */
+function openModal(title, bodyHtml, onMount){
+  const root = document.getElementById('modalRoot');
+  root.innerHTML = `<div class="modal-overlay" id="modalOverlay">
+    <div class="modal-card">
+      <div class="modal-tear"></div>
+      <div class="modal-head"><h3>${esc(title)}</h3><button class="modal-close" data-action="close-modal">✕</button></div>
+      <div class="modal-body">${bodyHtml}</div>
+    </div>
+  </div>`;
+  document.getElementById('modalOverlay').addEventListener('mousedown', e=>{
+    if(e.target.id==='modalOverlay') closeModal();
+  });
+  if(onMount) onMount(root);
+}
+function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
+
+function confirmAction(message, onYes){
+  openModal('請確認', `
+    <p class="confirm-msg">${esc(message)}</p>
+    <div class="modal-actions">
+      <button class="btn-secondary" data-action="close-modal">取消</button>
+      <button class="btn-danger" id="confirmYesBtn">確定執行</button>
+    </div>`, (root)=>{
+      root.querySelector('#confirmYesBtn').addEventListener('click', ()=>{ closeModal(); onYes(); });
+    });
+}
+
+function stampToast(msg, isError){
+  const root = document.getElementById('toastRoot');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  if(isError) el.style.borderColor = '#7A7365';
+  el.innerHTML = `<span class="chop-ring">${isError?'!':'印'}</span><span>${esc(msg)}</span>`;
+  root.appendChild(el);
+  setTimeout(()=>{ el.remove(); }, 2300);
+}
+
+/* ============================= RENDER: ACCOUNT TABS ============================= */
+function renderAccountTabs(){
+  const el = document.getElementById('accountTabs');
+  let html = '';
+  html += `<button class="acc-tab ${activeIsAll()?'active':''}" data-action="switch-account" data-id="all">
+      <span class="dot" style="background:${state.accounts.length? '#EFE9D8':'#999'}"></span>全部帳戶</button>`;
+  state.accounts.forEach(a=>{
+    html += `<button class="acc-tab ${state.activeAccountId===a.id?'active':''}" data-action="switch-account" data-id="${a.id}">
+      <span class="dot" style="background:${a.color}"></span>${esc(a.name)}</button>`;
+  });
+  html += `<button class="acc-tab-add" data-action="add-account">＋ 新增帳戶</button>`;
+  el.innerHTML = html;
+}
+
+/* ============================= RENDER: DASHBOARD ============================= */
+let equityChartInst=null, allocChartInst=null;
+function renderDashboard(){
+  const el = document.getElementById('dashboard');
+  if(state.accounts.length===0){
+    el.innerHTML = `<div class="card empty-state" style="margin-top:18px;">
+      <div class="glyph">📘</div>
+      <h3>還沒有任何證券帳戶</h3>
+      <p>新增第一個帳戶，開始記錄買賣、配息與每日損益。</p>
+      <button class="btn-stamp" data-action="add-account">＋ 新增第一個帳戶</button>
+    </div>`;
+    return;
+  }
+  const accId = state.activeAccountId;
+  const d = computeDashboard(accId);
+  const curve = computeEquityCurve(accId);
+
+  el.innerHTML = `
+  <div class="card dash-card">
+    <h3 style="font-size:14.5px;color:var(--ink-soft);letter-spacing:.5px;display:flex;align-items:center;gap:8px;">
+      ${activeIsAll()?'全部帳戶　總覽':esc(accountById(accId)?accountById(accId).name:'')+'　總覽'}
+      ${activeIsAll()?'':`<button class="btn-icon" data-action="edit-account" data-id="${accId}" title="編輯此帳戶">⚙︎ 帳戶設定</button>`}
+    </h3>
+    <div class="dash-grid">
+      <div class="dash-item">
+        <div class="dash-label">總市值</div>
+        <div class="dash-value">${fmtMoney(d.totalMV)}</div>
+        <div class="dash-sub">成本 ${fmtMoney(d.totalCost)}</div>
+      </div>
+      <div class="dash-item">
+        <div class="dash-label">未實現損益</div>
+        <div class="dash-value ${plClass(d.totalUnreal)}">${fmtMoney(d.totalUnreal)}</div>
+        <div class="dash-sub ${plClass(d.totalUnreal)}">${d.totalCost>0?fmtPct(d.totalUnreal/d.totalCost):'—'}</div>
+      </div>
+      <div class="dash-item">
+        <div class="dash-label">已實現損益（累計）</div>
+        <div class="dash-value ${plClass(d.cumRealizedPL)}">${fmtMoney(d.cumRealizedPL)}</div>
+        <div class="dash-sub">含手續費／證交稅</div>
+      </div>
+      <div class="dash-item">
+        <div class="dash-label">累計配息</div>
+        <div class="dash-value">${fmtMoney(d.totalDiv)}</div>
+        <div class="dash-sub">&nbsp;</div>
+      </div>
+      <div class="dash-item">
+        <div class="dash-label">自有 / 借貸資金
+          <button class="btn-icon" data-action="open-fundlog" style="padding:1px 5px;font-size:11px;" title="更新資金狀況">✎ 更新</button>
+        </div>
+        <div class="dash-value" style="font-size:15px;">${d.fundStatus?fmtMoney(d.fundStatus.ownAmount):'—'} <span style="color:var(--ink-soft);font-size:12px;">/</span> ${d.fundStatus?fmtMoney(d.fundStatus.marginAmount):'—'}</div>
+        <div class="dash-sub">${d.fundStatus? '總損益對自有資金報酬率（估算）'+fmtPct(d.returnOnOwn) : '尚未記錄資金狀況'}</div>
+        <div class="dash-sub">累計已還款 ${fmtMoney(d.totalRepaid)}</div>
+      </div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:14px;">
+    <div class="charts-row">
+      <div class="chart-box">
+        <h4>累計損益走勢（已實現＋未實現＋配息）</h4>
+        ${curve.length? '<canvas id="equityChart"></canvas>' : '<div class="empty-note">尚無交易或收盤價紀錄</div>'}
+      </div>
+      <div class="chart-box">
+        <h4>持股市值配置</h4>
+        ${d.rows.length? '<canvas id="allocChart"></canvas>' : '<div class="empty-note">目前無庫存</div>'}
+      </div>
+    </div>
+  </div>`;
+
+  if(curve.length && typeof Chart==='undefined'){
+    document.getElementById('equityChart').outerHTML = '<div class="empty-note">圖表元件載入失敗（需要網路連線），其餘功能不受影響</div>';
+  }
+  if(d.rows.length && typeof Chart==='undefined'){
+    const allocEl = document.getElementById('allocChart');
+    if(allocEl) allocEl.outerHTML = '<div class="empty-note">圖表元件載入失敗（需要網路連線），其餘功能不受影響</div>';
+  }
+  if(curve.length && typeof Chart!=='undefined'){
+    const ctx = document.getElementById('equityChart');
+    if(equityChartInst) equityChartInst.destroy();
+    equityChartInst = new Chart(ctx, {
+      type:'line',
+      data:{
+        labels: curve.map(c=>c.date),
+        datasets:[{
+          label:'累計損益',
+          data: curve.map(c=>Math.round(c.total)),
+          borderColor:'#B3261E',
+          backgroundColor:'rgba(179,38,30,0.08)',
+          fill:true, tension:.25, pointRadius:0, borderWidth:2
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}, tooltip:{callbacks:{label:(c)=>'$'+c.parsed.y.toLocaleString('en-US')}}},
+        scales:{
+          x:{ticks:{maxTicksLimit:5, font:{size:10}}, grid:{display:false}},
+          y:{ticks:{font:{size:10}, callback:v=>'$'+Number(v).toLocaleString('en-US')}, grid:{color:'#EDE3C8'}}
+        }
+      }
+    });
+  }
+  if(d.rows.length && typeof Chart!=='undefined'){
+    const ctx2 = document.getElementById('allocChart');
+    if(allocChartInst) allocChartInst.destroy();
+    const colors = ['#0B4F3C','#A9812F','#B3261E','#2B4C7E','#6B4E9C','#3B6E71','#8A5A2B','#C9A24E','#4A5D23','#7A3B3B'];
+    allocChartInst = new Chart(ctx2, {
+      type:'doughnut',
+      data:{
+        labels: d.rows.map(r=>r.symbol+' '+r.name),
+        datasets:[{ data: d.rows.map(r=>Math.round(r.mv||r.cost)), backgroundColor: colors, borderColor:'#FBF8F0', borderWidth:2 }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{position:'bottom', labels:{boxWidth:9, font:{size:9.5}}} }
+      }
+    });
+  }
+}
+
+/* ============================= SECTION TABS ============================= */
+let currentTab = 'holdings';
+function renderSectionTabs(){
+  const el = document.getElementById('sectionTabs');
+  el.querySelectorAll('button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.tab===currentTab);
+  });
+}
+
+/* ============================= PANEL: HOLDINGS ============================= */
+function renderHoldingsPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  const {holdings} = computeHoldings(accId);
+  const {rows} = enrichHoldings(holdings, todayStr());
+
+  if(rows.length===0){
+    return `<div class="panel-head"><h3>庫存股票</h3>
+      <div class="panel-tools"><button class="btn-stamp" data-action="open-buy">＋ 新增買進</button></div>
+    </div>
+    <div class="card empty-state"><div class="glyph">📈</div><p>目前沒有庫存，新增第一筆買進交易吧。</p>
+    <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button></div>`;
+  }
+
+  let rowsHtml = rows.map(r=>{
+    const acc = accountById(r.accountId);
+    const meta = r.meta || {};
+    return `<tr>
+      <td>
+        <div><strong>${esc(r.symbol)}</strong> ${esc(r.name||'')}</div>
+        <div><span class="badge ${r.category==='etf'?'badge-etf':'badge-stock'}">${r.category==='etf'?'ETF':'個股'}</span>
+        ${activeIsAll()&&acc?`<span class="acc-chip"><span class="dot" style="background:${acc.color}"></span>${esc(acc.name)}</span>`:''}</div>
+      </td>
+      <td class="num">${fmtShares(r.shares)}</td>
+      <td class="num">${fmtPrice(r.avgCost)}</td>
+      <td class="num">${r.price!=null?fmtPrice(r.price):'<span style="color:var(--ink-soft)">未設定</span>'}</td>
+      <td class="num">${fmtMoney(r.mv||r.cost)}</td>
+      <td class="num ${plClass(r.unreal)}">${r.unreal!=null?fmtMoney(r.unreal):'—'}<br><span style="font-size:10.5px;">${fmtPct(r.unrealPct)}</span></td>
+      <td style="font-size:11.5px;color:var(--ink-soft);">
+        ${meta.freq&&meta.freq!=='未設定'?esc(meta.freq):'—'}
+        ${(meta.expectedMonths&&meta.expectedMonths.length)?'<br>'+meta.expectedMonths.map(m=>m+'月').join('、'):''}
+        ${meta.expectedDate?'<br>下次 '+esc(meta.expectedDate):''}
+      </td>
+      <td>
+        <button class="btn-icon" data-action="update-price" data-symbol="${esc(r.symbol)}" title="更新價格">💲</button>
+        <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯資訊">✎</button>
+        <button class="btn-icon" data-action="open-sell" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="賣出">賣</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="panel-head">
+    <h3>庫存股票</h3>
+    <div class="panel-tools">
+      <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button>
+    </div>
+  </div>
+  <div class="ledger-wrap"><table>
+    <thead><tr>
+      <th>股票</th><th class="num">股數</th><th class="num">平均成本</th><th class="num">目前價格</th>
+      <th class="num">市值</th><th class="num">未實現損益</th><th>配息資訊</th><th>操作</th>
+    </tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
+/* ============================= PANEL: TRANSACTIONS ============================= */
+let txFilterSymbol='';
+function renderTransactionsPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  let txs = txForAccount(accId).slice().sort((a,b)=> b.date.localeCompare(a.date) || (b.seq||0)-(a.seq||0));
+  if(txFilterSymbol) txs = txs.filter(t=>t.symbol.toLowerCase().includes(txFilterSymbol.toLowerCase()));
+
+  const toolsHtml = `<div class="panel-tools">
+    <input class="input-txt" id="txFilterInput" placeholder="搜尋代號…" value="${esc(txFilterSymbol)}" style="width:120px;">
+    <button class="btn-stamp" data-action="open-buy">＋ 買進</button>
+    <button class="btn-secondary" data-action="open-sell-generic">－ 賣出</button>
+  </div>`;
+
+  if(txs.length===0){
+    return `<div class="panel-head"><h3>交易紀錄</h3>${toolsHtml}</div>
+      <div class="card empty-state"><div class="glyph">🧾</div><p>尚無交易紀錄。</p></div>`;
+  }
+
+  const rowsHtml = txs.map(t=>{
+    const acc = accountById(t.accountId);
+    return `<tr>
+      <td class="mono">${t.date}</td>
+      <td><span class="badge ${t.action==='buy'?'badge-buy':'badge-sell'}">${t.action==='buy'?'買進':'賣出'}</span>${t.dayTrade?' <span style="font-size:10px;color:var(--ink-soft);">當沖</span>':''}</td>
+      <td><strong>${esc(t.symbol)}</strong> ${esc(t.name||'')} <span class="badge ${t.category==='etf'?'badge-etf':'badge-stock'}">${t.category==='etf'?'ETF':'個股'}</span></td>
+      <td class="num">${fmtShares(t.shares)}</td>
+      <td class="num">${fmtPrice(t.price)}</td>
+      <td class="num">${fmtMoney(t.fee)}</td>
+      <td class="num">${fmtMoney(t.tax)}</td>
+      ${activeIsAll()?`<td><span class="acc-chip"><span class="dot" style="background:${acc?acc.color:'#999'}"></span>${esc(acc?acc.name:'')}</span></td>`:''}
+      <td>
+        <button class="btn-icon" data-action="edit-transaction" data-id="${t.id}" title="編輯">✎</button>
+        <button class="btn-icon" data-action="delete-transaction" data-id="${t.id}" title="刪除">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="panel-head"><h3>交易紀錄</h3>${toolsHtml}</div>
+  <div class="ledger-wrap"><table>
+    <thead><tr>
+      <th>日期</th><th>別</th><th>股票</th><th class="num">股數</th><th class="num">價格</th>
+      <th class="num">手續費</th><th class="num">交易稅</th>${activeIsAll()?'<th>帳戶</th>':''}<th>操作</th>
+    </tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
+/* ============================= PANEL: DIVIDENDS ============================= */
+function renderDividendsPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  const divs = divForAccount(accId).slice().sort((a,b)=>b.date.localeCompare(a.date));
+  const total = divs.reduce((s,d)=>s+(d.total||0),0);
+
+  const toolsHtml = `<div class="panel-tools">
+    <span style="font-size:12.5px;color:var(--ink-soft);">累計 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></span>
+    <button class="btn-stamp" data-action="open-dividend">＋ 新增配息</button>
+  </div>`;
+
+  if(divs.length===0){
+    return `<div class="panel-head"><h3>配息紀錄</h3>${toolsHtml}</div>
+      <div class="card empty-state"><div class="glyph">💰</div><p>尚無配息紀錄。</p></div>`;
+  }
+  const rowsHtml = divs.map(d=>{
+    const acc = accountById(d.accountId);
+    return `<tr>
+      <td class="mono">${d.date}</td>
+      <td><strong>${esc(d.symbol)}</strong> ${esc(d.name||'')}</td>
+      <td class="num">${fmtPrice(d.perShare)}</td>
+      <td class="num">${fmtShares(d.shares)}</td>
+      <td class="num" style="font-weight:600;">${fmtMoney(d.total)}</td>
+      ${activeIsAll()?`<td><span class="acc-chip"><span class="dot" style="background:${acc?acc.color:'#999'}"></span>${esc(acc?acc.name:'')}</span></td>`:''}
+      <td style="font-size:11.5px;color:var(--ink-soft);">${esc(d.note||'')}</td>
+      <td>
+        <button class="btn-icon" data-action="edit-dividend" data-id="${d.id}" title="編輯">✎</button>
+        <button class="btn-icon" data-action="delete-dividend" data-id="${d.id}" title="刪除">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="panel-head"><h3>配息紀錄</h3>${toolsHtml}</div>
+  <div class="ledger-wrap"><table>
+    <thead><tr><th>日期</th><th>股票</th><th class="num">每股配息</th><th class="num">股數</th><th class="num">總金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
+/* ============================= PANEL: DAILY P&L ============================= */
+function dailyLogsForAccount(accountId){
+  if(accountId==='all') return state.dailyPLLogs.slice();
+  return state.dailyPLLogs.filter(l=>l.accountId===accountId);
+}
+function renderManualDailySection(accId){
+  const logs = dailyLogsForAccount(accId).slice().sort((a,b)=> b.date.localeCompare(a.date));
+  const total = logs.reduce((s,l)=> s + (l.type==='profit'? l.amount : -l.amount), 0);
+  const toolsHtml = `<div class="panel-tools">
+    <span style="font-size:12.5px;color:var(--ink-soft);">手動紀錄合計 <strong class="mono ${plClass(total)}">${fmtMoney(total)}</strong></span>
+    <button class="btn-stamp" data-action="open-daily-log" data-type="profit">＋ 賺</button>
+    <button class="btn-stamp-loss" data-action="open-daily-log" data-type="loss">－ 賠</button>
+  </div>`;
+
+  if(logs.length===0){
+    return `<div class="panel-head"><h3>手動記錄每日賺賠</h3>${toolsHtml}</div>
+    <div class="card empty-state" style="padding:26px 20px;"><p>點選「賺」或「賠」，直接輸入今天的損益金額，不需依庫存計算。</p></div>`;
+  }
+  const rowsHtml = logs.map(l=>{
+    const acc = accountById(l.accountId);
+    const signed = l.type==='profit'? l.amount : -l.amount;
+    return `<tr>
+      <td class="mono">${l.date}</td>
+      <td><span class="badge ${l.type==='profit'?'badge-buy':'badge-sell'}">${l.type==='profit'?'賺':'賠'}</span></td>
+      <td class="num ${plClass(signed)}" style="font-weight:700;">${fmtMoney(signed)}</td>
+      ${activeIsAll()?`<td><span class="acc-chip"><span class="dot" style="background:${acc?acc.color:'#999'}"></span>${esc(acc?acc.name:'')}</span></td>`:''}
+      <td style="font-size:11.5px;color:var(--ink-soft);">${esc(l.note||'')}</td>
+      <td>
+        <button class="btn-icon" data-action="edit-daily-log" data-id="${l.id}" title="編輯">✎</button>
+        <button class="btn-icon" data-action="delete-daily-log" data-id="${l.id}" title="刪除">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="panel-head"><h3>手動記錄每日賺賠</h3>${toolsHtml}</div>
+  <div class="ledger-wrap"><table>
+    <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
+function renderDailyPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  const manualHtml = renderManualDailySection(accId);
+
+  const curve = computeEquityCurve(accId).slice().reverse();
+  let autoHtml;
+  if(curve.length===0){
+    autoHtml = `<div class="card empty-state" style="margin-top:26px;"><div class="glyph">📅</div><p>尚無交易或收盤價紀錄，無法試算每日損益。</p></div>`;
+  } else {
+    const rowsHtml = curve.map(c=>`<tr>
+      <td class="mono">${c.date}</td>
+      <td class="num ${plClass(c.dailyPL)}" style="font-weight:700;">${fmtMoney(c.dailyPL)}</td>
+      <td class="num ${plClass(c.total)}">${fmtMoney(c.total)}</td>
+      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.unreal)}</td>
+      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.cumRealizedPL)}</td>
+      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.divTotal)}</td>
+    </tr>`).join('');
+    autoHtml = `
+    <div class="ledger-wrap"><table>
+      <thead><tr><th>日期</th><th class="num">當日損益</th><th class="num">累計總損益</th><th class="num">未實現（快照）</th><th class="num">已實現（累計）</th><th class="num">配息（累計）</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table></div>`;
+  }
+
+  return `${manualHtml}
+  <div style="margin-top:30px; padding-top:6px; border-top:2px dotted var(--paper-line);">
+    <div class="panel-head" style="margin-bottom:6px;">
+      <h3 style="font-size:14px;color:var(--ink-soft);">系統試算走勢（依交易與收盤價自動計算）</h3>
+      <div class="panel-tools"><button class="btn-secondary" data-action="open-price-log">＋ 記錄收盤價</button></div>
+    </div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">「當日損益」＝當日與前一筆紀錄相比的累計損益變化（已實現＋未實現＋配息），需先記錄收盤價才能反映未實現部位的變動，與上方手動紀錄互不影響。</p>
+    ${autoHtml}
+  </div>`;
+}
+
+/* ============================= PANEL ROOT ============================= */
+
+function renderPanel(){
+  const root = document.getElementById('panelRoot');
+  if(currentTab==='holdings') root.innerHTML = renderHoldingsPanel();
+  else if(currentTab==='transactions') root.innerHTML = renderTransactionsPanel();
+  else if(currentTab==='dividends') root.innerHTML = renderDividendsPanel();
+  else if(currentTab==='daily') root.innerHTML = renderDailyPanel();
+
+  const filterInput = document.getElementById('txFilterInput');
+  if(filterInput){
+    filterInput.addEventListener('input', (e)=>{ txFilterSymbol = e.target.value; renderPanel(); filterInput.focus(); filterInput.selectionStart = filterInput.selectionEnd = filterInput.value.length; });
+  }
+}
+
+function render(){
+  renderAccountTabs();
+  renderDashboard();
+  renderSectionTabs();
+  renderPanel();
+}
+
+/* ============================= MODALS: ACCOUNT ============================= */
+function openAccountModal(editId){
+  const editing = editId ? accountById(editId) : null;
+  const usedColor = editing ? editing.color : PALETTE[state.accounts.length % PALETTE.length];
+  const body = `
+    <form id="accForm">
+      <div class="form-row"><label>帳戶名稱</label><input type="text" id="accName" required placeholder="例如：元大證券" value="${editing?esc(editing.name):''}"></div>
+      <div class="form-grid2">
+        <div class="form-row"><label>券商</label><input type="text" id="accBroker" placeholder="例如：元大" value="${editing?esc(editing.broker||''):''}"></div>
+        <div class="form-row"><label>帳戶類型</label>
+          <select id="accType">
+            <option value="cash" ${editing&&editing.type==='cash'?'selected':''}>現股</option>
+            <option value="margin" ${editing&&editing.type==='margin'?'selected':''}>信用（融資融券）</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label>手續費折數（1 = 不打折）</label><input type="number" step="0.01" min="0.1" max="1" id="accDiscount" value="${editing?editing.feeDiscount:1}"></div>
+      <div class="form-row"><label>標籤顏色</label>
+        <div class="swatches" id="colorSwatches">
+          ${PALETTE.map(c=>`<span class="swatch ${c===usedColor?'picked':''}" data-color="${c}" style="background:${c}"></span>`).join('')}
+        </div>
+      </div>
+      <div class="modal-actions">
+        ${editing?`<button type="button" class="btn-danger" id="accDeleteBtn" style="margin-right:auto;">刪除帳戶</button>`:''}
+        <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+        <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增帳戶'}</button>
+      </div>
+    </form>`;
+  openModal(editing?'編輯帳戶':'新增帳戶', body, (root)=>{
+    let picked = usedColor;
+    root.querySelectorAll('.swatch').forEach(sw=>{
+      sw.addEventListener('click', ()=>{
+        root.querySelectorAll('.swatch').forEach(s=>s.classList.remove('picked'));
+        sw.classList.add('picked'); picked = sw.dataset.color;
+      });
+    });
+    root.querySelector('#accForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const name = root.querySelector('#accName').value.trim();
+      if(!name) return;
+      if(editing){
+        editing.name = name;
+        editing.broker = root.querySelector('#accBroker').value.trim();
+        editing.type = root.querySelector('#accType').value;
+        editing.feeDiscount = parseFloat(root.querySelector('#accDiscount').value)||1;
+        editing.color = picked;
+      } else {
+        const a = {
+          id: uid(), name, broker: root.querySelector('#accBroker').value.trim(),
+          type: root.querySelector('#accType').value,
+          feeDiscount: parseFloat(root.querySelector('#accDiscount').value)||1,
+          color: picked
+        };
+        state.accounts.push(a);
+        state.activeAccountId = a.id;
+      }
+      saveState();
+      closeModal();
+      render();
+    });
+    if(editing){
+      root.querySelector('#accDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction(`確定要刪除帳戶「${editing.name}」嗎？此帳戶所有交易、配息與紀錄將一併刪除，且無法復原。`, ()=>{
+          state.transactions = state.transactions.filter(t=>t.accountId!==editing.id);
+          state.dividends = state.dividends.filter(d=>d.accountId!==editing.id);
+          state.holdingsMeta = state.holdingsMeta.filter(m=>m.accountId!==editing.id);
+          state.fundLogs = state.fundLogs.filter(f=>f.accountId!==editing.id);
+          state.repaymentLogs = state.repaymentLogs.filter(r=>r.accountId!==editing.id);
+          state.dailyPLLogs = state.dailyPLLogs.filter(l=>l.accountId!==editing.id);
+          state.accounts = state.accounts.filter(a=>a.id!==editing.id);
+          if(state.activeAccountId===editing.id) state.activeAccountId='all';
+          saveState();
+          render();
+        });
+      });
+    }
+  });
+}
+
+/* ============================= MODALS: TRANSACTION (BUY / SELL) ============================= */
+function accountSelectHtml(selectedId){
+  const opts = state.accounts.map(a=>`<option value="${a.id}" ${a.id===selectedId?'selected':''}>${esc(a.name)}</option>`).join('');
+  return `<select id="txAccount">${opts}</select>`;
+}
+function currentHoldingsForAccount(accountId, asOfDate){
+  const {holdings} = computeHoldingsAsOf(accountId, asOfDate||todayStr());
+  return holdings;
+}
+
+function openTransactionModal(opts){
+  opts = opts || {};
+  const editing = opts.editId ? state.transactions.find(t=>t.id===opts.editId) : null;
+  let action = editing ? editing.action : (opts.action || 'buy');
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = editing ? editing.accountId : (opts.accountId || fixedAccount || (state.accounts[0] && state.accounts[0].id));
+  const presetSymbol = opts.symbol || (editing ? editing.symbol : '');
+
+  function accountBlock(){
+    if(fixedAccount) return `<input type="hidden" id="txAccount" value="${fixedAccount}"><div class="form-row"><label>帳戶</label><input type="text" disabled value="${esc(accountById(fixedAccount).name)}"></div>`;
+    return `<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`;
+  }
+
+  function holdingOptionsHtml(accId){
+    const holdings = currentHoldingsForAccount(accId);
+    if(holdings.length===0) return '<option value="">（此帳戶尚無庫存）</option>';
+    return holdings.map(h=>`<option value="${esc(h.symbol)}" data-name="${esc(h.name||'')}" data-cat="${h.category}" data-shares="${h.shares}" ${h.symbol===presetSymbol?'selected':''}>${esc(h.symbol)} ${esc(h.name||'')}（庫存 ${fmtShares(h.shares)}）</option>`).join('');
+  }
+
+  function bodyHtml(){
+    const isBuy = action==='buy';
+    return `
+    <form id="txForm">
+      <div class="form-toggle" style="margin-bottom:14px;">
+        <button type="button" class="toggle-buy ${isBuy?'on':''}" data-act="buy">買進</button>
+        <button type="button" class="toggle-sell ${!isBuy?'on sell':''}" data-act="sell">賣出</button>
+      </div>
+      <div id="txAccountWrap">${accountBlock()}</div>
+      <div class="form-grid2">
+        <div class="form-row"><label>日期</label><input type="date" id="txDate" value="${editing?editing.date:todayStr()}" required></div>
+        <div class="form-row"><label>類別</label>
+          <select id="txCategory">
+            <option value="stock" ${editing&&editing.category==='stock'?'selected':''}>個股</option>
+            <option value="etf" ${editing&&editing.category==='etf'?'selected':''}>ETF</option>
+          </select>
+        </div>
+      </div>
+      <div id="symbolFieldWrap"></div>
+      <div class="form-grid2">
+        <div class="form-row"><label>股數</label><input type="number" step="1" min="0" id="txShares" value="${editing?editing.shares:''}" required></div>
+        <div class="form-row"><label>成交價</label><input type="number" step="0.01" min="0" id="txPrice" value="${editing?editing.price:''}" required></div>
+      </div>
+      <div class="form-grid2">
+        <div class="form-row"><label>手續費 <button type="button" class="btn-text" id="txFeeAuto">自動試算</button></label><input type="number" step="1" id="txFee" value="${editing?editing.fee:0}"></div>
+        <div class="form-row" id="taxWrap" style="${isBuy?'display:none;':''}"><label>證交稅 <button type="button" class="btn-text" id="txTaxAuto">自動試算</button></label><input type="number" step="1" id="txTax" value="${editing?editing.tax:0}"></div>
+      </div>
+      <div class="form-row" id="dayTradeWrap" style="${isBuy?'display:none;':''}">
+        <label class="inline-check"><input type="checkbox" id="txDayTrade" ${editing&&editing.dayTrade?'checked':''}> 當日沖銷（證交稅折半）</label>
+      </div>
+      <div class="form-row"><label>備註</label><textarea id="txNote">${editing?esc(editing.note||''):''}</textarea></div>
+      <div class="modal-actions">
+        ${editing?`<button type="button" class="btn-danger" id="txDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
+        <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+        <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增交易'}</button>
+      </div>
+    </form>`;
+  }
+
+  function symbolFieldHtml(){
+    if(action==='sell'){
+      return `<div class="form-row"><label>股票（僅顯示目前庫存）</label>
+        <select id="txSymbolSelect">${holdingOptionsHtml(selectedAccount)}</select>
+      </div>`;
+    }
+    return `<div class="form-grid2">
+      <div class="form-row"><label>股票代號</label><input type="text" id="txSymbol" value="${editing?esc(editing.symbol):esc(presetSymbol)}" required placeholder="例如 2330"></div>
+      <div class="form-row"><label>股票名稱</label><input type="text" id="txName" value="${editing?esc(editing.name||''):''}" placeholder="例如 台積電"></div>
+    </div>`;
+  }
+
+  openModal(editing?'編輯交易':'新增交易', bodyHtml(), (root)=>{
+    function mountSymbolField(){
+      root.querySelector('#symbolFieldWrap').innerHTML = symbolFieldHtml();
+      const sel = root.querySelector('#txSymbolSelect');
+      if(sel){
+        sel.addEventListener('change', syncSellShareMax);
+        syncSellShareMax();
+      }
+    }
+    function syncSellShareMax(){
+      const sel = root.querySelector('#txSymbolSelect');
+      if(!sel || !sel.value) return;
+      const opt = sel.options[sel.selectedIndex];
+      root.querySelector('#txShares').max = opt.dataset.shares;
+      root.querySelector('#txShares').placeholder = '最多 ' + Number(opt.dataset.shares).toLocaleString('en-US');
+      root.querySelector('#txCategory').value = opt.dataset.cat;
+    }
+    mountSymbolField();
+
+    function recalcFeeTax(){
+      const shares = parseFloat(root.querySelector('#txShares').value)||0;
+      const price = parseFloat(root.querySelector('#txPrice').value)||0;
+      const acc = accountById(root.querySelector('#txAccount') ? root.querySelector('#txAccount').value : selectedAccount);
+      const discount = acc ? acc.feeDiscount : 1;
+      root.querySelector('#txFee').value = calcDefaultFee(shares, price, discount);
+      if(action==='sell'){
+        const cat = root.querySelector('#txCategory').value;
+        const dayTrade = root.querySelector('#txDayTrade') && root.querySelector('#txDayTrade').checked;
+        root.querySelector('#txTax').value = calcDefaultTax(shares, price, cat, dayTrade);
+      }
+    }
+    root.querySelector('#txFeeAuto').addEventListener('click', recalcFeeTax);
+    const taxAutoBtn = root.querySelector('#txTaxAuto');
+    if(taxAutoBtn) taxAutoBtn.addEventListener('click', recalcFeeTax);
+    const dtCheck = root.querySelector('#txDayTrade');
+    if(dtCheck) dtCheck.addEventListener('change', recalcFeeTax);
+
+    function switchAction(newAction){
+      action = newAction;
+      root.querySelector('.toggle-buy').classList.toggle('on', action==='buy');
+      root.querySelector('.toggle-sell').classList.toggle('on', action==='sell');
+      root.querySelector('.toggle-sell').classList.toggle('sell', action==='sell');
+      root.querySelector('#dayTradeWrap').style.display = action==='buy' ? 'none' : '';
+      root.querySelector('#taxWrap').style.display = action==='buy' ? 'none' : '';
+      mountSymbolField();
+      recalcFeeTax();
+    }
+    root.querySelector('.toggle-buy').addEventListener('click', ()=>switchAction('buy'));
+    root.querySelector('.toggle-sell').addEventListener('click', ()=>switchAction('sell'));
+
+    const accSel = root.querySelector('#txAccount');
+    if(accSel && accSel.tagName==='SELECT'){
+      accSel.addEventListener('change', ()=>{ selectedAccount = accSel.value; mountSymbolField(); });
+    }
+
+    root.querySelector('#txForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = root.querySelector('#txAccount').value;
+      const date = root.querySelector('#txDate').value;
+      const shares = parseFloat(root.querySelector('#txShares').value)||0;
+      const price = parseFloat(root.querySelector('#txPrice').value)||0;
+      const fee = parseFloat(root.querySelector('#txFee').value)||0;
+      let symbol, name, category;
+      if(action==='sell'){
+        const sel = root.querySelector('#txSymbolSelect');
+        if(!sel.value){ stampToast('此帳戶尚無庫存可賣出', true); return; }
+        const opt = sel.options[sel.selectedIndex];
+        symbol = sel.value; name = opt.dataset.name; category = opt.dataset.cat;
+        const maxShares = parseFloat(opt.dataset.shares);
+        if(shares>maxShares+0.0001){ stampToast('賣出股數超過庫存', true); return; }
+      } else {
+        symbol = root.querySelector('#txSymbol').value.trim();
+        name = root.querySelector('#txName').value.trim();
+        category = root.querySelector('#txCategory').value;
+      }
+      if(shares<=0 || price<=0 || !symbol){ stampToast('請完整輸入股數、價格與代號', true); return; }
+      const tax = action==='sell' ? (parseFloat(root.querySelector('#txTax').value)||0) : 0;
+      const dayTrade = action==='sell' && root.querySelector('#txDayTrade').checked;
+      const note = root.querySelector('#txNote').value.trim();
+
+      if(editing){
+        Object.assign(editing, {accountId, date, symbol, name, category, action, shares, price, fee, tax, dayTrade, note});
+      } else {
+        state.transactions.push({
+          id: uid(), seq: seqCounter++, accountId, date, symbol, name, category, action,
+          shares, price, fee, tax, dayTrade, note
+        });
+      }
+      ensureMeta(accountId, symbol, name, category);
+      saveState();
+      closeModal();
+      render();
+    });
+
+    if(editing){
+      root.querySelector('#txDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要刪除這筆交易紀錄嗎？', ()=>{
+          state.transactions = state.transactions.filter(t=>t.id!==editing.id);
+          saveState();
+          render();
+        });
+      });
+    }
+  });
+}
+
+/* ============================= MODALS: DIVIDEND ============================= */
+function openDividendModal(editId){
+  const editing = editId ? state.dividends.find(d=>d.id===editId) : null;
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = editing ? editing.accountId : (fixedAccount || (state.accounts[0]&&state.accounts[0].id));
+
+  function holdingOptions(accId){
+    const holdings = currentHoldingsForAccount(accId);
+    if(holdings.length===0) return '<option value="">（此帳戶尚無庫存）</option>';
+    return holdings.map(h=>`<option value="${esc(h.symbol)}" data-name="${esc(h.name||'')}" data-shares="${h.shares}" ${editing&&editing.symbol===h.symbol?'selected':''}>${esc(h.symbol)} ${esc(h.name||'')}（庫存 ${fmtShares(h.shares)}）</option>`).join('');
+  }
+
+  const body = `
+  <form id="divForm">
+    ${fixedAccount?`<input type="hidden" id="divAccount" value="${fixedAccount}">`:`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-row"><label>日期</label><input type="date" id="divDate" value="${editing?editing.date:todayStr()}" required></div>
+    <div class="form-row"><label>股票</label><select id="divSymbol">${holdingOptions(selectedAccount)}</select></div>
+    <div class="form-grid2">
+      <div class="form-row"><label>每股配息金額</label><input type="number" step="0.001" id="divPerShare" value="${editing?editing.perShare:''}"></div>
+      <div class="form-row"><label>股數</label><input type="number" step="1" id="divShares" value="${editing?editing.shares:''}"></div>
+    </div>
+    <div class="form-row"><label>總金額</label><input type="number" step="1" id="divTotal" value="${editing?editing.total:''}"></div>
+    <div class="form-row"><label>備註</label><textarea id="divNote">${editing?esc(editing.note||''):''}</textarea></div>
+    <div class="modal-actions">
+      ${editing?`<button type="button" class="btn-danger" id="divDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增配息'}</button>
+    </div>
+  </form>`;
+  openModal(editing?'編輯配息':'新增配息紀錄', body, (root)=>{
+    if(editing) root.querySelector('#divAccount') && (root.querySelector('#divAccount').value = editing.accountId);
+    const accSel = root.querySelector('#divAccount');
+    if(accSel && accSel.tagName==='SELECT'){
+      accSel.addEventListener('change', ()=>{
+        selectedAccount = accSel.value;
+        root.querySelector('#divSymbol').innerHTML = holdingOptions(selectedAccount);
+        syncShares();
+      });
+    }
+    function syncShares(){
+      const sel = root.querySelector('#divSymbol');
+      if(sel && sel.value){
+        const opt = sel.options[sel.selectedIndex];
+        if(!editing) root.querySelector('#divShares').value = opt.dataset.shares;
+      }
+      recalcTotal();
+    }
+    root.querySelector('#divSymbol').addEventListener('change', syncShares);
+    function recalcTotal(){
+      const per = parseFloat(root.querySelector('#divPerShare').value)||0;
+      const sh = parseFloat(root.querySelector('#divShares').value)||0;
+      if(per>0 && sh>0 && !root.dataset.totalTouched) root.querySelector('#divTotal').value = Math.round(per*sh);
+    }
+    root.querySelector('#divPerShare').addEventListener('input', recalcTotal);
+    root.querySelector('#divShares').addEventListener('input', recalcTotal);
+    root.querySelector('#divTotal').addEventListener('input', ()=>{ root.dataset.totalTouched='1'; });
+    if(!editing) syncShares();
+
+    root.querySelector('#divForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || root.querySelector('#divAccount').value;
+      const sel = root.querySelector('#divSymbol');
+      const symbol = sel.value;
+      if(!symbol){ stampToast('此帳戶尚無庫存', true); return; }
+      const opt = sel.options[sel.selectedIndex];
+      const name = opt.dataset.name;
+      const date = root.querySelector('#divDate').value;
+      const perShare = parseFloat(root.querySelector('#divPerShare').value)||0;
+      const shares = parseFloat(root.querySelector('#divShares').value)||0;
+      const total = parseFloat(root.querySelector('#divTotal').value)||0;
+      const note = root.querySelector('#divNote').value.trim();
+      if(editing){
+        Object.assign(editing, {accountId, date, symbol, name, perShare, shares, total, note});
+      } else {
+        state.dividends.push({id:uid(), accountId, date, symbol, name, perShare, shares, total, note});
+      }
+      saveState();
+      closeModal();
+      currentTab='dividends';
+      render();
+    });
+    if(editing){
+      root.querySelector('#divDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要刪除這筆配息紀錄嗎？', ()=>{
+          state.dividends = state.dividends.filter(d=>d.id!==editing.id);
+          saveState();
+          render();
+        });
+      });
+    }
+  });
+}
+
+/* ============================= MODALS: MANUAL DAILY P&L LOG ============================= */
+function openDailyLogModal(opts){
+  opts = opts || {};
+  const editing = opts.editId ? state.dailyPLLogs.find(l=>l.id===opts.editId) : null;
+  let type = editing ? editing.type : (opts.type || 'profit');
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = editing ? editing.accountId : (fixedAccount || (state.accounts[0] && state.accounts[0].id));
+
+  function bodyHtml(){
+    return `
+    <form id="dailyLogForm">
+      <div class="form-toggle" style="margin-bottom:14px;">
+        <button type="button" class="toggle-profit ${type==='profit'?'on profit':''}" data-t="profit">賺</button>
+        <button type="button" class="toggle-loss ${type==='loss'?'on loss':''}" data-t="loss">賠</button>
+      </div>
+      ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+      <div class="form-row"><label>日期</label><input type="date" id="dailyLogDate" value="${editing?editing.date:todayStr()}" required></div>
+      <div class="form-row"><label id="amountLabel">${type==='profit'?'獲利金額':'虧損金額'}</label><input type="number" step="1" min="0" id="dailyLogAmount" value="${editing?editing.amount:''}" required></div>
+      <div class="form-row"><label>備註</label><textarea id="dailyLogNote" placeholder="選填，例如今天當沖了哪幾檔">${editing?esc(editing.note||''):''}</textarea></div>
+      <div class="modal-actions">
+        ${editing?`<button type="button" class="btn-danger" id="dailyLogDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
+        <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+        <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增紀錄'}</button>
+      </div>
+    </form>`;
+  }
+
+  openModal(editing?'編輯每日賺賠':'記錄每日賺賠', bodyHtml(), (root)=>{
+    function paint(){
+      root.querySelector('.toggle-profit').classList.toggle('on', type==='profit');
+      root.querySelector('.toggle-profit').classList.toggle('profit', type==='profit');
+      root.querySelector('.toggle-loss').classList.toggle('on', type==='loss');
+      root.querySelector('.toggle-loss').classList.toggle('loss', type==='loss');
+      root.querySelector('#amountLabel').textContent = type==='profit' ? '獲利金額' : '虧損金額';
+    }
+    root.querySelector('.toggle-profit').addEventListener('click', ()=>{ type='profit'; paint(); });
+    root.querySelector('.toggle-loss').addEventListener('click', ()=>{ type='loss'; paint(); });
+
+    root.querySelector('#dailyLogForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || root.querySelector('.modal-body select').value;
+      const date = root.querySelector('#dailyLogDate').value;
+      const amount = Math.abs(parseFloat(root.querySelector('#dailyLogAmount').value)||0);
+      const note = root.querySelector('#dailyLogNote').value.trim();
+      if(amount<=0){ stampToast('請輸入金額', true); return; }
+      if(editing){
+        Object.assign(editing, {accountId, date, type, amount, note});
+      } else {
+        state.dailyPLLogs.push({id:uid(), accountId, date, type, amount, note});
+      }
+      saveState();
+      closeModal();
+      render();
+    });
+    if(editing){
+      root.querySelector('#dailyLogDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要刪除這筆每日賺賠紀錄嗎？', ()=>{
+          state.dailyPLLogs = state.dailyPLLogs.filter(l=>l.id!==editing.id);
+          saveState();
+          render();
+        });
+      });
+    }
+  });
+}
+
+/* ============================= MODALS: META (holding info / expected dividend) ============================= */
+function openMetaModal(accountId, symbol){
+  const meta = ensureMeta(accountId, symbol);
+  const months = meta.expectedMonths || [];
+  const freqNeedsMonths = ['年配','半年配','季配'];
+  const monthHint = {
+    '年配':'年配通常為 1 個月',
+    '半年配':'半年配通常為 2 個月（例如 1 月、7 月）',
+    '季配':'季配通常為 4 個月（例如 3、6、9、12 月）'
+  };
+  function monthGridHtml(){
+    let boxes = '';
+    for(let m=1;m<=12;m++){
+      boxes += `<label class="month-box"><input type="checkbox" class="month-check" value="${m}" ${months.includes(m)?'checked':''}>${m}月</label>`;
+    }
+    return `<div class="form-row" id="monthsWrap" style="${freqNeedsMonths.includes(meta.freq)?'':'display:none;'}">
+      <label>預計配息月份（可複選）</label>
+      <div class="month-grid">${boxes}</div>
+      <div class="form-hint" id="monthsHint">${monthHint[meta.freq]||''}</div>
+    </div>`;
+  }
+  const body = `
+  <form id="metaForm">
+    <div class="form-row"><label>股票代號</label><input type="text" value="${esc(symbol)}" disabled></div>
+    <div class="form-grid2">
+      <div class="form-row"><label>股票名稱</label><input type="text" id="metaName" value="${esc(meta.name||'')}"></div>
+      <div class="form-row"><label>類別</label>
+        <select id="metaCategory">
+          <option value="stock" ${meta.category==='stock'?'selected':''}>個股</option>
+          <option value="etf" ${meta.category==='etf'?'selected':''}>ETF</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row"><label>配息頻率</label>
+      <select id="metaFreq">
+        ${['未設定','年配','半年配','季配','月配','不定期'].map(f=>`<option value="${f}" ${meta.freq===f?'selected':''}>${f}</option>`).join('')}
+      </select>
+    </div>
+    <div id="monthsWrapOuter">${monthGridHtml()}</div>
+    <div class="form-row"><label>下一次預計確切日期（選填）</label><input type="date" id="metaDate" value="${meta.expectedDate||''}"></div>
+    <div class="form-row"><label>備註</label><textarea id="metaNote">${esc(meta.note||'')}</textarea></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">儲存</button>
+    </div>
+  </form>`;
+  openModal('持股資訊 － ' + symbol, body, (root)=>{
+    root.querySelector('#metaFreq').addEventListener('change', (e)=>{
+      const wrap = root.querySelector('#monthsWrap');
+      const show = freqNeedsMonths.includes(e.target.value);
+      wrap.style.display = show ? '' : 'none';
+      root.querySelector('#monthsHint').textContent = monthHint[e.target.value] || '';
+    });
+    root.querySelector('#metaForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const freq = root.querySelector('#metaFreq').value;
+      meta.name = root.querySelector('#metaName').value.trim();
+      meta.category = root.querySelector('#metaCategory').value;
+      meta.freq = freq;
+      meta.expectedMonths = freqNeedsMonths.includes(freq)
+        ? Array.from(root.querySelectorAll('.month-check:checked')).map(el=>parseInt(el.value,10)).sort((a,b)=>a-b)
+        : [];
+      meta.expectedDate = root.querySelector('#metaDate').value;
+      meta.note = root.querySelector('#metaNote').value.trim();
+      saveState();
+      closeModal();
+      render();
+    });
+  });
+}
+
+/* ============================= MODALS: PRICE LOG ============================= */
+function openPriceModal(presetSymbol){
+  const accId = activeIsAll() ? (state.accounts[0]&&state.accounts[0].id) : state.activeAccountId;
+  const holdings = currentHoldingsForAccount(accId);
+  const options = holdings.map(h=>`<option value="${esc(h.symbol)}" ${h.symbol===presetSymbol?'selected':''}>${esc(h.symbol)} ${esc(h.name||'')}</option>`).join('');
+  const body = `
+  <form id="priceForm">
+    <div class="form-row"><label>股票</label><select id="priceSymbol">${options || '<option value="">（尚無庫存）</option>'}</select></div>
+    <div class="form-grid2">
+      <div class="form-row"><label>日期</label><input type="date" id="priceDate" value="${todayStr()}" required></div>
+      <div class="form-row"><label>收盤價</label><input type="number" step="0.01" min="0" id="priceValue" required></div>
+    </div>
+    <div class="form-hint">用於試算未實現損益與每日盈虧走勢，不影響已成交的交易紀錄。</div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">儲存價格</button>
+    </div>
+  </form>`;
+  openModal('記錄收盤價', body, (root)=>{
+    root.querySelector('#priceForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const symbol = root.querySelector('#priceSymbol').value;
+      if(!symbol){ stampToast('沒有可設定價格的股票', true); return; }
+      const date = root.querySelector('#priceDate').value;
+      const price = parseFloat(root.querySelector('#priceValue').value);
+      if(!(price>0)) return;
+      state.priceLogs.push({id:uid(), date, symbol, price});
+      saveState();
+      closeModal();
+      render();
+    });
+  });
+}
+
+/* ============================= MODALS: CLOUD SYNC ============================= */
+function openSyncModal(){
+  if(!isFirebaseConfigured()){
+    openModal('線上同步', `
+      <p class="confirm-msg">這台裝置尚未完成 Firebase 後端設定，暫時無法使用線上同步。請先依照設定步驟建立 Firebase 專案，並將設定值填入檔案中的 <code>firebaseConfig</code>。</p>
+      <div class="modal-actions"><button type="button" class="btn-secondary" data-action="close-modal">關閉</button></div>
+    `);
+    return;
+  }
+  const statusLabel = !syncCode ? '尚未啟用同步'
+    : syncStatus==='connected' ? '已連線，同步中'
+    : syncStatus==='connecting' ? '連線中…'
+    : syncStatus==='error' ? '連線失敗，請確認網路'
+    : '尚未啟用同步';
+  const statusColor = syncStatus==='connected' ? 'var(--red)' : syncStatus==='error' ? 'var(--flat)' : 'var(--ink-soft)';
+
+  const body = syncCode ? `
+    <p class="confirm-msg" style="color:${statusColor};font-weight:600;">${esc(statusLabel)}</p>
+    <div class="form-row">
+      <label>目前同步代碼</label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="syncCodeDisplay" value="${esc(syncCode)}" readonly class="mono" style="letter-spacing:3px; font-weight:700; text-align:center;">
+        <button type="button" class="btn-text" id="copyCodeBtn" style="white-space:nowrap;">複製</button>
+      </div>
+      <div class="form-hint">在其他裝置開啟同一份檔案，點選「☁ 同步設定」並輸入這組代碼，就會自動同步所有資料。請勿分享給不信任的人——持有代碼者即可讀寫這份資料。</div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-danger" id="stopSyncBtn" style="margin-right:auto;">停用同步</button>
+      <button type="button" class="btn-secondary" data-action="close-modal">關閉</button>
+    </div>
+  ` : `
+    <p class="confirm-msg">輸入其他裝置上已經在用的同步代碼，或產生一組新代碼給這台裝置使用。</p>
+    <div class="form-row">
+      <label>同步代碼</label>
+      <input type="text" id="syncCodeInput" maxlength="8" placeholder="例如 A7K3M9QZ" style="text-transform:uppercase; letter-spacing:3px; text-align:center; font-weight:700;">
+    </div>
+    <div class="modal-actions" style="justify-content:space-between;">
+      <button type="button" class="btn-secondary" id="genCodeBtn">產生新代碼</button>
+      <button type="button" class="btn-stamp" id="applyCodeBtn">套用並開始同步</button>
+    </div>
+    <div class="form-hint" style="margin-top:12px;">第一次設定：在第一台裝置按「產生新代碼」並套用；接着到其他裝置的「☁ 同步設定」輸入同一組代碼即可自動帶入現有資料。</div>
+  `;
+
+  openModal('線上同步', body, (root)=>{
+    if(syncCode){
+      root.querySelector('#copyCodeBtn').addEventListener('click', ()=>{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(syncCode).then(()=>stampToast('已複製代碼')).catch(()=>stampToast('複製失敗', true));
+        } else {
+          const el = root.querySelector('#syncCodeDisplay'); el.select();
+          try{ document.execCommand('copy'); stampToast('已複製代碼'); }catch(e){ stampToast('複製失敗', true); }
+        }
+      });
+      root.querySelector('#stopSyncBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要停用同步嗎？停用後這台裝置只會使用本機儲存，不會再自動更新或接收其他裝置的資料。', ()=>{
+          stopSync();
+          stampToast('已停用同步');
+        });
+      });
+    } else {
+      root.querySelector('#genCodeBtn').addEventListener('click', ()=>{
+        root.querySelector('#syncCodeInput').value = genSyncCode();
+      });
+      root.querySelector('#applyCodeBtn').addEventListener('click', ()=>{
+        const code = root.querySelector('#syncCodeInput').value.trim().toUpperCase();
+        if(code.length<4){ stampToast('請輸入或產生代碼', true); return; }
+        closeModal();
+        startSync(code);
+        stampToast('已套用代碼，開始同步…');
+      });
+    }
+  });
+}
+
+/* ============================= MODALS: FUND STATUS LOG ============================= */
+function openFundLogModal(preselectAccount){
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = preselectAccount || fixedAccount || (state.accounts[0] && state.accounts[0].id);
+
+  function historyHtml(accId){
+    const logs = fundLogsForAccount(accId);
+    if(logs.length===0) return '<p class="form-hint">此帳戶尚無資金紀錄。</p>';
+    return `<div class="ledger-wrap" style="margin-bottom:14px;"><table>
+      <thead><tr><th>日期</th><th class="num">自有資金</th><th class="num">借貸資金</th><th>備註</th><th></th></tr></thead>
+      <tbody>${logs.map(l=>`<tr>
+        <td class="mono">${l.date}</td>
+        <td class="num">${fmtMoney(l.ownAmount)}</td>
+        <td class="num">${fmtMoney(l.marginAmount)}</td>
+        <td style="font-size:11.5px;color:var(--ink-soft);">${esc(l.note||'')}</td>
+        <td><button type="button" class="btn-icon fund-del-btn" data-id="${l.id}" title="刪除">🗑</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+  function repayHistoryHtml(accId){
+    const logs = repaymentLogsForAccount(accId);
+    const total = logs.reduce((s,r)=>s+(r.amount||0),0);
+    if(logs.length===0) return '<p class="form-hint">此帳戶尚無還款紀錄。</p>';
+    return `<p class="form-hint" style="margin-top:0;">累計已還款 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></p>
+    <div class="ledger-wrap" style="margin-bottom:14px;"><table>
+      <thead><tr><th>日期</th><th class="num">還款金額</th><th>備註</th><th></th></tr></thead>
+      <tbody>${logs.map(r=>`<tr>
+        <td class="mono">${r.date}</td>
+        <td class="num">${fmtMoney(r.amount)}</td>
+        <td style="font-size:11.5px;color:var(--ink-soft);">${esc(r.note||'')}</td>
+        <td><button type="button" class="btn-icon repay-del-btn" data-id="${r.id}" title="刪除">🗑</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+
+  const body = `
+    ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div id="fundHistoryWrap">${historyHtml(selectedAccount)}</div>
+    <form id="fundLogForm">
+      <div class="form-grid2">
+        <div class="form-row"><label>日期</label><input type="date" id="fundDate" value="${todayStr()}" required></div>
+        <div class="form-row"><label>&nbsp;</label></div>
+      </div>
+      <div class="form-grid2">
+        <div class="form-row"><label>目前自有資金</label><input type="number" step="1" min="0" id="fundOwn" value="0" required></div>
+        <div class="form-row"><label>目前借貸資金</label><input type="number" step="1" min="0" id="fundMargin" value="0" required></div>
+      </div>
+      <div class="form-row"><label>備註</label><input type="text" id="fundNote" placeholder="選填"></div>
+      <div class="form-hint">記錄「目前」投入與借貸的資金總額即可，不需對應到個別交易；之後想更新時再新增一筆最新紀錄即可，儀表板會自動採用最新一筆。</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" data-action="close-modal">關閉</button>
+        <button type="submit" class="btn-stamp">新增紀錄</button>
+      </div>
+    </form>
+    <div style="margin:22px 0 14px; border-top:2px dotted var(--paper-line);"></div>
+    <h4 style="font-size:14px; margin-bottom:10px;">每期還款金額紀錄</h4>
+    <div id="repayHistoryWrap">${repayHistoryHtml(selectedAccount)}</div>
+    <form id="repayLogForm">
+      <div class="form-grid2">
+        <div class="form-row"><label>還款日期</label><input type="date" id="repayDate" value="${todayStr()}" required></div>
+        <div class="form-row"><label>還款金額</label><input type="number" step="1" min="0" id="repayAmount" required></div>
+      </div>
+      <div class="form-row"><label>備註</label><input type="text" id="repayNote" placeholder="選填，例如本期本金＋利息"></div>
+      <div class="form-hint">單純記錄每期還了多少錢，不會自動從上方「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</div>
+      <div class="modal-actions">
+        <button type="submit" class="btn-stamp">新增還款紀錄</button>
+      </div>
+    </form>`;
+
+  openModal('資金狀況', body, (root)=>{
+    function bindDeleteButtons(){
+      root.querySelectorAll('.fund-del-btn').forEach(b=>{
+        b.addEventListener('click', ()=>{
+          const id = b.dataset.id;
+          confirmAction('確定要刪除這筆資金紀錄嗎？', ()=>{
+            state.fundLogs = state.fundLogs.filter(f=>f.id!==id);
+            saveState();
+            render();
+            openFundLogModal(selectedAccount);
+          });
+        });
+      });
+      root.querySelectorAll('.repay-del-btn').forEach(b=>{
+        b.addEventListener('click', ()=>{
+          const id = b.dataset.id;
+          confirmAction('確定要刪除這筆還款紀錄嗎？', ()=>{
+            state.repaymentLogs = state.repaymentLogs.filter(r=>r.id!==id);
+            saveState();
+            render();
+            openFundLogModal(selectedAccount);
+          });
+        });
+      });
+    }
+    bindDeleteButtons();
+
+    const realAccSel = fixedAccount ? null : root.querySelector('.modal-body select');
+    if(realAccSel){
+      realAccSel.addEventListener('change', ()=>{
+        selectedAccount = realAccSel.value;
+        root.querySelector('#fundHistoryWrap').innerHTML = historyHtml(selectedAccount);
+        root.querySelector('#repayHistoryWrap').innerHTML = repayHistoryHtml(selectedAccount);
+        bindDeleteButtons();
+      });
+    }
+
+    root.querySelector('#fundLogForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || selectedAccount;
+      if(!accountId){ stampToast('請先新增帳戶', true); return; }
+      const date = root.querySelector('#fundDate').value;
+      const ownAmount = parseFloat(root.querySelector('#fundOwn').value)||0;
+      const marginAmount = parseFloat(root.querySelector('#fundMargin').value)||0;
+      const note = root.querySelector('#fundNote').value.trim();
+      state.fundLogs.push({id:uid(), accountId, date, ownAmount, marginAmount, note});
+      saveState();
+      closeModal();
+      render();
+    });
+
+    root.querySelector('#repayLogForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || selectedAccount;
+      if(!accountId){ stampToast('請先新增帳戶', true); return; }
+      const date = root.querySelector('#repayDate').value;
+      const amount = Math.abs(parseFloat(root.querySelector('#repayAmount').value)||0);
+      const note = root.querySelector('#repayNote').value.trim();
+      if(amount<=0){ stampToast('請輸入還款金額', true); return; }
+      state.repaymentLogs.push({id:uid(), accountId, date, amount, note});
+      saveState();
+      root.querySelector('#repayHistoryWrap').innerHTML = repayHistoryHtml(selectedAccount);
+      bindDeleteButtons();
+      root.querySelector('#repayAmount').value = '';
+      root.querySelector('#repayNote').value = '';
+      render();
+    });
+  });
+}
+
+/* ============================= IMPORT / EXPORT ============================= */
+function exportData(){
+  const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `股票盈虧簿備份_${todayStr()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  stampToast('已匯出備份檔');
+}
+function importData(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const parsed = JSON.parse(e.target.result);
+      confirmAction('匯入將覆蓋目前所有資料，確定要繼續嗎？', ()=>{
+        state = Object.assign(defaultState(), parsed);
+        saveState(false);
+        stampToast('匯入成功');
+        render();
+      });
+    }catch(err){
+      stampToast('檔案格式錯誤，匯入失敗', true);
+    }
+  };
+  reader.readAsText(file);
+}
+
+/* ============================= EVENT DELEGATION ============================= */
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('[data-action]');
+  if(!btn) return;
+  const action = btn.dataset.action;
+  switch(action){
+    case 'close-modal': closeModal(); break;
+    case 'switch-account':
+      state.activeAccountId = btn.dataset.id;
+      saveState(false);
+      render();
+      break;
+    case 'add-account': openAccountModal(); break;
+    case 'edit-account': openAccountModal(btn.dataset.id); break;
+    case 'open-buy': openTransactionModal({action:'buy'}); break;
+    case 'open-sell': openTransactionModal({action:'sell', accountId:btn.dataset.accid, symbol:btn.dataset.symbol}); break;
+    case 'open-sell-generic': openTransactionModal({action:'sell'}); break;
+    case 'edit-transaction': openTransactionModal({editId:btn.dataset.id}); break;
+    case 'delete-transaction':
+      confirmAction('確定要刪除這筆交易紀錄嗎？', ()=>{
+        state.transactions = state.transactions.filter(t=>t.id!==btn.dataset.id);
+        saveState(); render();
+      });
+      break;
+    case 'open-dividend': openDividendModal(); break;
+    case 'edit-dividend': openDividendModal(btn.dataset.id); break;
+    case 'delete-dividend':
+      confirmAction('確定要刪除這筆配息紀錄嗎？', ()=>{
+        state.dividends = state.dividends.filter(d=>d.id!==btn.dataset.id);
+        saveState(); render();
+      });
+      break;
+    case 'edit-meta': openMetaModal(btn.dataset.accid, btn.dataset.symbol); break;
+    case 'update-price': openPriceModal(btn.dataset.symbol); break;
+    case 'open-price-log': openPriceModal(); break;
+    case 'open-fundlog': openFundLogModal(); break;
+    case 'open-daily-log': openDailyLogModal({type:btn.dataset.type}); break;
+    case 'edit-daily-log': openDailyLogModal({editId:btn.dataset.id}); break;
+    case 'delete-daily-log':
+      confirmAction('確定要刪除這筆每日賺賠紀錄嗎？', ()=>{
+        state.dailyPLLogs = state.dailyPLLogs.filter(l=>l.id!==btn.dataset.id);
+        saveState(); render();
+      });
+      break;
+    case 'open-sync': openSyncModal(); break;
+    case 'export-data': exportData(); break;
+    case 'trigger-import': document.getElementById('fileImport').click(); break;
+    case 'clear-local':
+      confirmAction(
+        syncCode
+          ? '確定要清除這台裝置的本機資料嗎？清除後會自動從雲端重新下載最新資料，不會影響雲端或其他裝置上的資料。'
+          : '確定要清除本機資料嗎？此動作無法復原，建議先匯出備份。',
+        ()=>{
+          localStorage.removeItem(STORAGE_KEY);
+          state = defaultState();
+          render();
+          if(syncCode){
+            stampToast('本機已清除，正在從雲端重新下載…');
+            pullFromCloudOnce().then((ok)=>{
+              render();
+              stampToast(ok ? '已從雲端還原資料' : '雲端目前也沒有資料');
+            });
+          } else {
+            stampToast('本機資料已清除');
+          }
+        }
+      );
+      break;
+    case 'clear-all':
+      confirmAction(
+        syncCode
+          ? '確定要清除所有資料嗎？這會同時清除雲端與所有已同步裝置上的資料，且無法復原！建議先匯出備份。'
+          : '確定要清除所有資料嗎？此動作無法復原，建議先匯出備份。',
+        ()=>{
+          state = defaultState();
+          saveState(false);
+          stampToast('資料已清除');
+          render();
+        }
+      );
+      break;
+  }
+});
+document.getElementById('sectionTabs').addEventListener('click', (e)=>{
+  const btn = e.target.closest('button[data-tab]');
+  if(!btn) return;
+  currentTab = btn.dataset.tab;
+  renderSectionTabs();
+  renderPanel();
+});
+document.getElementById('fileImport').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(file) importData(file);
+  e.target.value = '';
+});
+
+/* ============================= INIT ============================= */
+render();
+if(syncCode) startSync(syncCode);
+
+})();
+</script>
+</body>
+</html>
