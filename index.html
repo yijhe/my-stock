@@ -310,16 +310,19 @@
   </header>
 
   <main class="page">
-    <div id="dashboard"></div>
+    <div id="dashboardSummary"></div>
 
     <nav class="tabs-section" id="sectionTabs">
       <button data-tab="holdings">庫存股票</button>
       <button data-tab="transactions">交易紀錄</button>
       <button data-tab="dividends">配息紀錄</button>
+      <button data-tab="repayment">還款紀錄</button>
       <button data-tab="daily">每日盈虧</button>
     </nav>
 
     <section id="panelRoot" class="panel"></section>
+
+    <div id="dashboardCharts"></div>
 
     <p class="footnote">資料僅儲存於此瀏覽器（localStorage），請定期使用「匯出備份」保存檔案。手續費／證交稅為試算參考，實際請以券商對帳單為準。</p>
   </main>
@@ -734,8 +737,8 @@ function renderAccountTabs(){
 
 /* ============================= RENDER: DASHBOARD ============================= */
 let equityChartInst=null, allocChartInst=null;
-function renderDashboard(){
-  const el = document.getElementById('dashboard');
+function renderDashboardSummary(){
+  const el = document.getElementById('dashboardSummary');
   if(state.accounts.length===0){
     el.innerHTML = `<div class="card empty-state" style="margin-top:18px;">
       <div class="glyph">📘</div>
@@ -747,7 +750,6 @@ function renderDashboard(){
   }
   const accId = state.activeAccountId;
   const d = computeDashboard(accId);
-  const curve = computeEquityCurve(accId);
 
   el.innerHTML = `
   <div class="card dash-card">
@@ -785,8 +787,18 @@ function renderDashboard(){
         <div class="dash-sub">累計已還款 ${fmtMoney(d.totalRepaid)}</div>
       </div>
     </div>
-  </div>
-  <div class="card" style="margin-top:14px;">
+  </div>`;
+}
+
+function renderDashboardCharts(){
+  const el = document.getElementById('dashboardCharts');
+  if(state.accounts.length===0){ el.innerHTML=''; return; }
+  const accId = state.activeAccountId;
+  const d = computeDashboard(accId);
+  const curve = computeEquityCurve(accId);
+
+  el.innerHTML = `
+  <div class="card" style="margin-top:22px;">
     <div class="charts-row">
       <div class="chart-box">
         <h4>累計損益走勢（已實現＋未實現＋配息）</h4>
@@ -1001,6 +1013,43 @@ function renderDividendsPanel(){
   </table></div>`;
 }
 
+/* ============================= PANEL: REPAYMENT LOG ============================= */
+function renderRepaymentPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  const logs = repaymentLogsForAccount(accId);
+  const total = logs.reduce((s,r)=>s+(r.amount||0),0);
+
+  const toolsHtml = `<div class="panel-tools">
+    <span style="font-size:12.5px;color:var(--ink-soft);">累計 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></span>
+    <button class="btn-stamp" data-action="open-repayment">＋ 新增還款紀錄</button>
+  </div>`;
+
+  if(logs.length===0){
+    return `<div class="panel-head"><h3>還款紀錄</h3>${toolsHtml}</div>
+      <div class="card empty-state"><div class="glyph">🏦</div><p>尚無還款紀錄。</p></div>`;
+  }
+  const rowsHtml = logs.map(r=>{
+    const acc = accountById(r.accountId);
+    return `<tr>
+      <td class="mono">${r.date}</td>
+      <td class="num" style="font-weight:600;">${fmtMoney(r.amount)}</td>
+      ${activeIsAll()?`<td><span class="acc-chip"><span class="dot" style="background:${acc?acc.color:'#999'}"></span>${esc(acc?acc.name:'')}</span></td>`:''}
+      <td style="font-size:11.5px;color:var(--ink-soft);">${esc(r.note||'')}</td>
+      <td>
+        <button class="btn-icon" data-action="edit-repayment" data-id="${r.id}" title="編輯">✎</button>
+        <button class="btn-icon" data-action="delete-repayment" data-id="${r.id}" title="刪除">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `<div class="panel-head"><h3>還款紀錄</h3>${toolsHtml}</div>
+  <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">單純記錄每期還了多少錢，不會自動從資金狀況的「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</p>
+  <div class="ledger-wrap"><table>
+    <thead><tr><th>日期</th><th class="num">還款金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table></div>`;
+}
+
 /* ============================= PANEL: DAILY P&L ============================= */
 function dailyLogsForAccount(accountId){
   if(accountId==='all') return state.dailyPLLogs.slice();
@@ -1084,6 +1133,7 @@ function renderPanel(){
   if(currentTab==='holdings') root.innerHTML = renderHoldingsPanel();
   else if(currentTab==='transactions') root.innerHTML = renderTransactionsPanel();
   else if(currentTab==='dividends') root.innerHTML = renderDividendsPanel();
+  else if(currentTab==='repayment') root.innerHTML = renderRepaymentPanel();
   else if(currentTab==='daily') root.innerHTML = renderDailyPanel();
 
   const filterInput = document.getElementById('txFilterInput');
@@ -1094,9 +1144,10 @@ function renderPanel(){
 
 function render(){
   renderAccountTabs();
-  renderDashboard();
+  renderDashboardSummary();
   renderSectionTabs();
   renderPanel();
+  renderDashboardCharts();
 }
 
 /* ============================= MODALS: ACCOUNT ============================= */
@@ -1726,21 +1777,6 @@ function openFundLogModal(preselectAccount){
       </tr>`).join('')}</tbody>
     </table></div>`;
   }
-  function repayHistoryHtml(accId){
-    const logs = repaymentLogsForAccount(accId);
-    const total = logs.reduce((s,r)=>s+(r.amount||0),0);
-    if(logs.length===0) return '<p class="form-hint">此帳戶尚無還款紀錄。</p>';
-    return `<p class="form-hint" style="margin-top:0;">累計已還款 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></p>
-    <div class="ledger-wrap" style="margin-bottom:14px;"><table>
-      <thead><tr><th>日期</th><th class="num">還款金額</th><th>備註</th><th></th></tr></thead>
-      <tbody>${logs.map(r=>`<tr>
-        <td class="mono">${r.date}</td>
-        <td class="num">${fmtMoney(r.amount)}</td>
-        <td style="font-size:11.5px;color:var(--ink-soft);">${esc(r.note||'')}</td>
-        <td><button type="button" class="btn-icon repay-del-btn" data-id="${r.id}" title="刪除">🗑</button></td>
-      </tr>`).join('')}</tbody>
-    </table></div>`;
-  }
 
   const body = `
     ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
@@ -1755,24 +1791,10 @@ function openFundLogModal(preselectAccount){
         <div class="form-row"><label>目前借貸資金</label><input type="number" step="1" min="0" id="fundMargin" value="0" required></div>
       </div>
       <div class="form-row"><label>備註</label><input type="text" id="fundNote" placeholder="選填"></div>
-      <div class="form-hint">記錄「目前」投入與借貸的資金總額即可，不需對應到個別交易；之後想更新時再新增一筆最新紀錄即可，儀表板會自動採用最新一筆。</div>
+      <div class="form-hint">記錄「目前」投入與借貸的資金總額即可，不需對應到個別交易；之後想更新時再新增一筆最新紀錄即可，儀表板會自動採用最新一筆。每期還款金額請至「還款紀錄」頁籤記錄。</div>
       <div class="modal-actions">
         <button type="button" class="btn-secondary" data-action="close-modal">關閉</button>
         <button type="submit" class="btn-stamp">新增紀錄</button>
-      </div>
-    </form>
-    <div style="margin:22px 0 14px; border-top:2px dotted var(--paper-line);"></div>
-    <h4 style="font-size:14px; margin-bottom:10px;">每期還款金額紀錄</h4>
-    <div id="repayHistoryWrap">${repayHistoryHtml(selectedAccount)}</div>
-    <form id="repayLogForm">
-      <div class="form-grid2">
-        <div class="form-row"><label>還款日期</label><input type="date" id="repayDate" value="${todayStr()}" required></div>
-        <div class="form-row"><label>還款金額</label><input type="number" step="1" min="0" id="repayAmount" required></div>
-      </div>
-      <div class="form-row"><label>備註</label><input type="text" id="repayNote" placeholder="選填，例如本期本金＋利息"></div>
-      <div class="form-hint">單純記錄每期還了多少錢，不會自動從上方「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</div>
-      <div class="modal-actions">
-        <button type="submit" class="btn-stamp">新增還款紀錄</button>
       </div>
     </form>`;
 
@@ -1789,17 +1811,6 @@ function openFundLogModal(preselectAccount){
           });
         });
       });
-      root.querySelectorAll('.repay-del-btn').forEach(b=>{
-        b.addEventListener('click', ()=>{
-          const id = b.dataset.id;
-          confirmAction('確定要刪除這筆還款紀錄嗎？', ()=>{
-            state.repaymentLogs = state.repaymentLogs.filter(r=>r.id!==id);
-            saveState();
-            render();
-            openFundLogModal(selectedAccount);
-          });
-        });
-      });
     }
     bindDeleteButtons();
 
@@ -1808,7 +1819,6 @@ function openFundLogModal(preselectAccount){
       realAccSel.addEventListener('change', ()=>{
         selectedAccount = realAccSel.value;
         root.querySelector('#fundHistoryWrap').innerHTML = historyHtml(selectedAccount);
-        root.querySelector('#repayHistoryWrap').innerHTML = repayHistoryHtml(selectedAccount);
         bindDeleteButtons();
       });
     }
@@ -1826,23 +1836,57 @@ function openFundLogModal(preselectAccount){
       closeModal();
       render();
     });
+  });
+}
 
-    root.querySelector('#repayLogForm').addEventListener('submit', (e)=>{
+/* ============================= MODALS: REPAYMENT LOG ============================= */
+function openRepaymentModal(editId){
+  const editing = editId ? state.repaymentLogs.find(r=>r.id===editId) : null;
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = editing ? editing.accountId : (fixedAccount || (state.accounts[0] && state.accounts[0].id));
+
+  const body = `
+  <form id="repayForm">
+    ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-row"><label>還款日期</label><input type="date" id="repayDate" value="${editing?editing.date:todayStr()}" required></div>
+    <div class="form-row"><label>還款金額</label><input type="number" step="1" min="0" id="repayAmount" value="${editing?editing.amount:''}" required></div>
+    <div class="form-row"><label>備註</label><input type="text" id="repayNote" placeholder="選填，例如本期本金＋利息" value="${editing?esc(editing.note||''):''}"></div>
+    <div class="modal-actions">
+      ${editing?`<button type="button" class="btn-danger" id="repayDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增還款紀錄'}</button>
+    </div>
+  </form>`;
+
+  openModal(editing?'編輯還款紀錄':'新增還款紀錄', body, (root)=>{
+    root.querySelector('#repayForm').addEventListener('submit', (e)=>{
       e.preventDefault();
-      const accountId = fixedAccount || selectedAccount;
+      const accountId = fixedAccount || root.querySelector('.modal-body select').value;
       if(!accountId){ stampToast('請先新增帳戶', true); return; }
       const date = root.querySelector('#repayDate').value;
       const amount = Math.abs(parseFloat(root.querySelector('#repayAmount').value)||0);
       const note = root.querySelector('#repayNote').value.trim();
       if(amount<=0){ stampToast('請輸入還款金額', true); return; }
-      state.repaymentLogs.push({id:uid(), accountId, date, amount, note});
+      if(editing){
+        Object.assign(editing, {accountId, date, amount, note});
+      } else {
+        state.repaymentLogs.push({id:uid(), accountId, date, amount, note});
+      }
       saveState();
-      root.querySelector('#repayHistoryWrap').innerHTML = repayHistoryHtml(selectedAccount);
-      bindDeleteButtons();
-      root.querySelector('#repayAmount').value = '';
-      root.querySelector('#repayNote').value = '';
+      closeModal();
+      currentTab = 'repayment';
       render();
     });
+    if(editing){
+      root.querySelector('#repayDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要刪除這筆還款紀錄嗎？', ()=>{
+          state.repaymentLogs = state.repaymentLogs.filter(r=>r.id!==editing.id);
+          saveState();
+          render();
+        });
+      });
+    }
   });
 }
 
@@ -1906,6 +1950,14 @@ document.addEventListener('click', (e)=>{
     case 'delete-dividend':
       confirmAction('確定要刪除這筆配息紀錄嗎？', ()=>{
         state.dividends = state.dividends.filter(d=>d.id!==btn.dataset.id);
+        saveState(); render();
+      });
+      break;
+    case 'open-repayment': openRepaymentModal(); break;
+    case 'edit-repayment': openRepaymentModal(btn.dataset.id); break;
+    case 'delete-repayment':
+      confirmAction('確定要刪除這筆還款紀錄嗎？', ()=>{
+        state.repaymentLogs = state.repaymentLogs.filter(r=>r.id!==btn.dataset.id);
         saveState(); render();
       });
       break;
