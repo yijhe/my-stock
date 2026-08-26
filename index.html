@@ -1181,6 +1181,7 @@ function renderDividendsPanel(){
   const toolsHtml = `<div class="panel-tools">
     <span style="font-size:12.5px;color:var(--ink-soft);">累計 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></span>
     <button class="btn-stamp" data-action="open-dividend">＋ 新增配息</button>
+    <button class="btn-secondary" data-action="open-import" data-kind="dividend">📥 匯入</button>
   </div>`;
 
   if(divs.length===0){
@@ -1217,6 +1218,7 @@ function renderRepaymentPanel(){
   const toolsHtml = `<div class="panel-tools">
     <span style="font-size:12.5px;color:var(--ink-soft);">累計 <strong class="mono" style="color:var(--ink);">${fmtMoney(total)}</strong></span>
     <button class="btn-stamp" data-action="open-repayment">＋ 新增還款紀錄</button>
+    <button class="btn-secondary" data-action="open-import" data-kind="repayment">📥 匯入</button>
   </div>`;
 
   if(logs.length===0){
@@ -1256,6 +1258,7 @@ function renderManualDailySection(accId){
     <span style="font-size:12.5px;color:var(--ink-soft);">手動紀錄合計 <strong class="mono ${plClass(total)}">${fmtMoney(total)}</strong></span>
     <button class="btn-stamp" data-action="open-daily-log" data-type="profit">＋ 賺</button>
     <button class="btn-stamp-loss" data-action="open-daily-log" data-type="loss">－ 賠</button>
+    <button class="btn-secondary" data-action="open-import" data-kind="daily">📥 匯入</button>
   </div>`;
 
   if(logs.length===0){
@@ -2090,6 +2093,87 @@ function openRepaymentModal(editId){
   });
 }
 
+/* ============================= MODALS: BULK IMPORT (date + amount) ============================= */
+const IMPORT_KIND_META = {
+  daily:      {title:'匯入每日盈虧', hint:'每行一筆：日期,金額（正數＝賺，負數＝賠）', example:'2026-08-01,5000\n2026-08-02,-2000', tab:'daily'},
+  dividend:   {title:'匯入配息紀錄', hint:'每行一筆：日期,金額', example:'2026-07-01,3500\n2026-10-15,1200', tab:'dividends'},
+  repayment:  {title:'匯入還款紀錄', hint:'每行一筆：日期,金額', example:'2026-02-01,15000\n2026-03-01,15000', tab:'repayment'}
+};
+
+function parseImportLines(text){
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length>0);
+  return lines.map(line=>{
+    const parts = line.split(/[,\t]+|\s{2,}|\s(?=[\d$-])/).map(p=>p.trim()).filter(p=>p.length>0);
+    if(parts.length<2) return {raw:line, ok:false, error:'格式不完整（需要日期與金額兩個欄位）'};
+    const [rawDate, rawAmount] = parts;
+    const dm = rawDate.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})$/);
+    if(!dm) return {raw:line, ok:false, error:'日期格式錯誤（請用 YYYY-MM-DD 或 YYYY/MM/DD）'};
+    const date = `${dm[1]}-${String(dm[2]).padStart(2,'0')}-${String(dm[3]).padStart(2,'0')}`;
+    const amount = parseFloat(String(rawAmount).replace(/[$,\s]/g,''));
+    if(isNaN(amount)) return {raw:line, ok:false, error:'金額格式錯誤'};
+    return {raw:line, ok:true, date, amount};
+  });
+}
+
+function openImportModal(kind){
+  const meta = IMPORT_KIND_META[kind];
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  let selectedAccount = fixedAccount || (state.accounts[0] && state.accounts[0].id);
+
+  const body = `
+    ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-row">
+      <label>貼上資料</label>
+      <textarea id="importText" rows="7" placeholder="${esc(meta.example)}" style="font-family:'IBM Plex Mono',monospace;"></textarea>
+      <div class="form-hint">${esc(meta.hint)}，可用逗號、Tab 或空白分隔；一行一筆，可直接從 Excel／記事本複製貼上。</div>
+    </div>
+    <div class="form-row"><label>套用到所有匯入紀錄的備註（選填）</label><input type="text" id="importNote" placeholder="選填"></div>
+    <div id="importResult"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-action="close-modal">關閉</button>
+      <button type="button" class="btn-stamp" id="importGoBtn">解析並匯入</button>
+    </div>`;
+
+  openModal(meta.title, body, (root)=>{
+    root.querySelector('#importGoBtn').addEventListener('click', ()=>{
+      const accountId = fixedAccount || (root.querySelector('.modal-body select') && root.querySelector('.modal-body select').value);
+      if(!accountId){ stampToast('請先新增帳戶', true); return; }
+      const text = root.querySelector('#importText').value;
+      const note = root.querySelector('#importNote').value.trim();
+      const parsed = parseImportLines(text);
+      if(parsed.length===0){ stampToast('請先貼上資料', true); return; }
+      let okCount = 0;
+      parsed.forEach(p=>{
+        if(!p.ok) return;
+        if(kind==='daily'){
+          const type = p.amount < 0 ? 'loss' : 'profit';
+          state.dailyPLLogs.push({id:uid(), accountId, date:p.date, type, amount:Math.abs(p.amount), note});
+        } else if(kind==='dividend'){
+          state.dividends.push({id:uid(), accountId, date:p.date, total:Math.abs(p.amount), note});
+        } else if(kind==='repayment'){
+          state.repaymentLogs.push({id:uid(), accountId, date:p.date, amount:Math.abs(p.amount), note});
+        }
+        okCount++;
+      });
+      const failed = parsed.filter(p=>!p.ok);
+      if(okCount>0) saveState(false);
+      const resEl = root.querySelector('#importResult');
+      resEl.innerHTML = `<p class="form-hint" style="margin-top:10px;">
+        ✓ 成功匯入 ${okCount} 筆${failed.length?`　✕ 略過 ${failed.length} 筆`:''}
+      </p>` + (failed.length ? `<div class="ledger-wrap" style="margin-top:6px;"><table>
+        <thead><tr><th>原始內容</th><th>問題</th></tr></thead>
+        <tbody>${failed.map(f=>`<tr><td class="mono" style="font-size:11.5px;">${esc(f.raw)}</td><td style="font-size:11.5px;color:var(--red);">${esc(f.error)}</td></tr>`).join('')}</tbody>
+      </table></div>` : '');
+      root.querySelector('#importText').value = failed.map(f=>f.raw).join('\n');
+      if(okCount>0){
+        stampToast(`已匯入 ${okCount} 筆`);
+        currentTab = meta.tab;
+        render();
+      }
+    });
+  });
+}
+
 /* ============================= IMPORT / EXPORT ============================= */
 function exportData(){
   const blob = new Blob([JSON.stringify(state, null, 2)], {type:'application/json'});
@@ -2166,6 +2250,7 @@ document.addEventListener('click', (e)=>{
     case 'open-price-log': openPriceModal(); break;
     case 'open-fundlog': openFundLogModal(); break;
     case 'open-daily-log': openDailyLogModal({type:btn.dataset.type}); break;
+    case 'open-import': openImportModal(btn.dataset.kind); break;
     case 'edit-daily-log': openDailyLogModal({editId:btn.dataset.id}); break;
     case 'delete-daily-log':
       confirmAction('確定要刪除這筆每日賺賠紀錄嗎？', ()=>{
