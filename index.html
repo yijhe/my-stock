@@ -759,7 +759,12 @@ async function fetchTwseHistorical(symbol, dateIso){
   const url = `https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=${y}${m}01&stockNo=${encodeURIComponent(symbol)}`;
   const json = await fetchJsonWithCorsFallback(url);
   if(json.stat!=='OK' || !Array.isArray(json.data)) return null;
-  const name = (json.title||'').replace(/\s*各日成交資訊\s*$/,'').trim();
+  // title looks like "109年09月 2330 台積電 各日成交資訊" — strip the ROC year/month, the stock code, and the trailing suffix
+  const name = (json.title||'')
+    .replace(/^\d+年\d+月\s*/, '')
+    .replace(new RegExp('^' + symbol.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s*'), '')
+    .replace(/\s*各日成交資訊\s*$/, '')
+    .trim();
   const rocTarget = `${parseInt(y,10)-1911}/${m}/${d}`;
   const row = json.data.find(r=>r[0]===rocTarget);
   return {name, price: row ? numOrNull(row[6]) : null, date: dateIso};
