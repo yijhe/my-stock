@@ -1108,6 +1108,7 @@ function renderHoldingsPanel(){
         <button class="btn-icon" data-action="update-price" data-symbol="${esc(r.symbol)}" title="更新價格">💲</button>
         <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯資訊">✎</button>
         <button class="btn-icon" data-action="open-sell" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="賣出">賣</button>
+        <button class="btn-icon" data-action="delete-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="刪除庫存">🗑</button>
       </td>
     </tr>`;
   }).join('');
@@ -2227,6 +2228,18 @@ document.addEventListener('click', (e)=>{
     case 'edit-account': openAccountModal(btn.dataset.id); break;
     case 'open-buy': openTransactionModal({action:'buy'}); break;
     case 'open-sell': openTransactionModal({action:'sell', accountId:btn.dataset.accid, symbol:btn.dataset.symbol}); break;
+    case 'delete-holding':
+      {
+        const accId = btn.dataset.accid, symbol = btn.dataset.symbol;
+        const acc = accountById(accId);
+        confirmAction(`確定要刪除「${symbol}」嗎？這會清除「${acc?acc.name:''}」帳戶中此股票的所有買賣交易紀錄（含已實現損益），且無法復原，建議先匯出備份。`, ()=>{
+          state.transactions = state.transactions.filter(t=>!(t.accountId===accId && t.symbol===symbol));
+          state.holdingsMeta = state.holdingsMeta.filter(m=>!(m.accountId===accId && m.symbol===symbol));
+          saveState();
+          render();
+        });
+      }
+      break;
     case 'open-sell-generic': openTransactionModal({action:'sell'}); break;
     case 'edit-transaction': openTransactionModal({editId:btn.dataset.id}); break;
     case 'delete-transaction':
