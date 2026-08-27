@@ -552,33 +552,27 @@ async function fetchTaiwanMarketSnapshot(forceRefresh){
     const byCode = {};
     let anySuccess = false;
     try{
-      const res = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-      if(res.ok){
-        const rows = await res.json();
-        rows.forEach(r=>{
-          if(r.Code){
-            const close = parseFloat(r.ClosingPrice);
-            byCode[r.Code] = { name: r.Name||'', close: isFinite(close)&&r.ClosingPrice!==''?close:null };
-          }
-        });
-        anySuccess = true;
-      }
+      const rows = await fetchJsonWithCorsFallback('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+      rows.forEach(r=>{
+        if(r.Code){
+          const close = parseFloat(r.ClosingPrice);
+          byCode[r.Code] = { name: r.Name||'', close: isFinite(close)&&r.ClosingPrice!==''?close:null };
+        }
+      });
+      anySuccess = true;
     }catch(e){ console.error('TWSE market fetch failed', e); }
     try{
-      const res2 = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
-      if(res2.ok){
-        const rows2 = await res2.json();
-        rows2.forEach(r=>{
-          const code = r.SecuritiesCompanyCode || r.Code || r.CommonStock;
-          if(!code) return;
-          const name = r.CompanyName || r.Name || r.CodeName || (byCode[code]&&byCode[code].name) || '';
-          const closeRaw = r.Close!=null ? r.Close : r.ClosingPrice;
-          const close = parseFloat(closeRaw);
-          if(!byCode[code]) byCode[code] = { name, close: isFinite(close)?close:null };
-          else { if(!byCode[code].name) byCode[code].name = name; if(byCode[code].close==null && isFinite(close)) byCode[code].close = close; }
-        });
-        anySuccess = true;
-      }
+      const rows2 = await fetchJsonWithCorsFallback('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
+      rows2.forEach(r=>{
+        const code = r.SecuritiesCompanyCode || r.Code || r.CommonStock;
+        if(!code) return;
+        const name = r.CompanyName || r.Name || r.CodeName || (byCode[code]&&byCode[code].name) || '';
+        const closeRaw = r.Close!=null ? r.Close : r.ClosingPrice;
+        const close = parseFloat(closeRaw);
+        if(!byCode[code]) byCode[code] = { name, close: isFinite(close)?close:null };
+        else { if(!byCode[code].name) byCode[code].name = name; if(byCode[code].close==null && isFinite(close)) byCode[code].close = close; }
+      });
+      anySuccess = true;
     }catch(e){ console.error('TPEx market fetch failed', e); }
     marketDataFetchInFlight = null;
     if(!anySuccess) return null;
@@ -1086,7 +1080,6 @@ function renderHoldingsPanel(){
     <div class="card empty-state"><div class="glyph">📈</div><p>目前沒有庫存，新增第一筆買進交易吧。</p>
     <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button></div>`;
   }
-
   let rowsHtml = rows.map(r=>{
     const acc = accountById(r.accountId);
     const meta = r.meta || {};
@@ -1118,8 +1111,10 @@ function renderHoldingsPanel(){
     <h3>庫存股票</h3>
     <div class="panel-tools">
       <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button>
+      <button class="btn-secondary" data-action="bulk-fetch-prices">🔄 最新價格</button>
     </div>
   </div>
+  <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">「最新價格」會抓取台股（上市／上櫃）最近一次收盤價並套用到下方所有庫存；若當日尚無資料，會自動改用最近一次的收盤價。</p>
   <div class="ledger-wrap"><table>
     <thead><tr>
       <th>股票</th><th class="num col-tight">股數</th><th class="num col-tight">平均成本</th><th class="num col-tight">目前價格</th>
@@ -2253,6 +2248,17 @@ document.addEventListener('click', (e)=>{
       break;
     case 'edit-meta': openMetaModal(btn.dataset.accid, btn.dataset.symbol); break;
     case 'update-price': openPriceModal(btn.dataset.symbol); break;
+    case 'bulk-fetch-prices':
+      (async ()=>{
+        const origText = btn.textContent;
+        btn.textContent = '更新中…'; btn.disabled = true;
+        try{
+          await bulkFetchTodayPrices();
+        } finally {
+          btn.textContent = origText; btn.disabled = false;
+        }
+      })();
+      break;
     case 'open-price-log': openPriceModal(); break;
     case 'open-fundlog': openFundLogModal(); break;
     case 'open-daily-log': openDailyLogModal({type:btn.dataset.type}); break;
