@@ -184,6 +184,11 @@
   /* Table (ledger style) */
   .ledger-wrap{overflow-x:auto; border-radius:var(--radius); border:1px solid var(--border); background:var(--card);}
   table{width:100%; border-collapse:collapse; font-size:13px; min-width:640px;}
+  .ledger-wrap.compact table{width:auto; min-width:0;}
+  .ledger-wrap.compact th, .ledger-wrap.compact td{padding:8px 16px 8px 0;}
+  .ledger-wrap.compact th:first-child, .ledger-wrap.compact td:first-child{padding-left:14px;}
+  .ledger-wrap.compact th:last-child, .ledger-wrap.compact td:last-child{padding-right:14px;}
+  .col-tight{width:1%;}
   thead th{
     text-align:left; font-weight:600; color:var(--ink-soft); font-size:11.5px; letter-spacing:.4px;
     padding:10px 12px; border-bottom:2px solid var(--border); background:var(--paper); white-space:nowrap;
@@ -1117,8 +1122,8 @@ function renderHoldingsPanel(){
   </div>
   <div class="ledger-wrap"><table>
     <thead><tr>
-      <th>股票</th><th class="num">股數</th><th class="num">平均成本</th><th class="num">目前價格</th>
-      <th class="num">市值</th><th class="num">未實現損益</th><th>配息資訊</th><th>操作</th>
+      <th>股票</th><th class="num col-tight">股數</th><th class="num col-tight">平均成本</th><th class="num col-tight">目前價格</th>
+      <th class="num col-tight">市值</th><th class="num col-tight">未實現損益</th><th>配息資訊</th><th class="col-tight">操作</th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1164,8 +1169,8 @@ function renderTransactionsPanel(){
   return `<div class="panel-head"><h3>交易紀錄</h3>${toolsHtml}</div>
   <div class="ledger-wrap"><table>
     <thead><tr>
-      <th>日期</th><th>別</th><th>股票</th><th class="num">股數</th><th class="num">價格</th>
-      <th class="num">手續費</th><th class="num">交易稅</th>${activeIsAll()?'<th>帳戶</th>':''}<th>操作</th>
+      <th class="col-tight">日期</th><th class="col-tight">別</th><th>股票</th><th class="num col-tight">股數</th><th class="num col-tight">價格</th>
+      <th class="num col-tight">手續費</th><th class="num col-tight">交易稅</th>${activeIsAll()?'<th class="col-tight">帳戶</th>':''}<th class="col-tight">操作</th>
     </tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1202,8 +1207,8 @@ function renderDividendsPanel(){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>配息紀錄</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table>
-    <thead><tr><th>日期</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+  <div class="ledger-wrap compact"><table>
+    <thead><tr><th class="col-tight">日期</th><th class="num col-tight">金額</th>${activeIsAll()?'<th class="col-tight">帳戶</th>':''}<th>備註</th><th class="col-tight">操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
 }
@@ -1240,8 +1245,8 @@ function renderRepaymentPanel(){
   }).join('');
   return `<div class="panel-head"><h3>還款紀錄</h3>${toolsHtml}</div>
   <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">單純記錄每期還了多少錢，不會自動從資金狀況的「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</p>
-  <div class="ledger-wrap"><table>
-    <thead><tr><th>日期</th><th class="num">還款金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+  <div class="ledger-wrap compact"><table>
+    <thead><tr><th class="col-tight">日期</th><th class="num col-tight">還款金額</th>${activeIsAll()?'<th class="col-tight">帳戶</th>':''}<th>備註</th><th class="col-tight">操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
 }
@@ -1281,8 +1286,8 @@ function renderManualDailySection(accId){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>手動記錄每日賺賠</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table>
-    <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+  <div class="ledger-wrap compact"><table>
+    <thead><tr><th class="col-tight">日期</th><th class="col-tight">類型</th><th class="num col-tight">金額</th>${activeIsAll()?'<th class="col-tight">帳戶</th>':''}<th>備註</th><th class="col-tight">操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
 }
@@ -1304,10 +1309,11 @@ function renderDailyPanel(){
       <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.unreal)}</td>
       <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.cumRealizedPL)}</td>
       <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.divTotal)}</td>
+      <td></td>
     </tr>`).join('');
     autoHtml = `
-    <div class="ledger-wrap"><table>
-      <thead><tr><th>日期</th><th class="num">當日損益</th><th class="num">累計總損益</th><th class="num">未實現（快照）</th><th class="num">已實現（累計）</th><th class="num">配息（累計）</th></tr></thead>
+    <div class="ledger-wrap compact"><table>
+      <thead><tr><th class="col-tight">日期</th><th class="num col-tight">當日損益</th><th class="num col-tight">累計總損益</th><th class="num col-tight">未實現（快照）</th><th class="num col-tight">已實現（累計）</th><th class="num col-tight">配息（累計）</th><th></th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table></div>`;
   }
@@ -1969,8 +1975,8 @@ function openFundLogModal(preselectAccount){
   function historyHtml(accId){
     const logs = fundLogsForAccount(accId);
     if(logs.length===0) return '<p class="form-hint">此帳戶尚無資金紀錄。</p>';
-    return `<div class="ledger-wrap" style="margin-bottom:14px;"><table>
-      <thead><tr><th>日期</th><th class="num">自有資金</th><th class="num">借貸資金</th><th>備註</th><th></th></tr></thead>
+    return `<div class="ledger-wrap compact" style="margin-bottom:14px;"><table>
+      <thead><tr><th class="col-tight">日期</th><th class="num col-tight">自有資金</th><th class="num col-tight">借貸資金</th><th>備註</th><th class="col-tight"></th></tr></thead>
       <tbody>${logs.map(l=>`<tr>
         <td class="mono">${l.date}</td>
         <td class="num">${fmtMoney(l.ownAmount)}</td>
