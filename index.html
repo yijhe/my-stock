@@ -591,33 +591,60 @@ async function lookupCompanyName(code){
 }
 
 async function bulkFetchTodayPrices(){
-  stampToast('正在抓取今日收盤價…');
-  const snap = await fetchTaiwanMarketSnapshot(true);
-  if(!snap){ stampToast('無法連線取得股價資料，請檢查網路連線', true); return; }
   const today = todayStr();
   const accId = state.activeAccountId;
   const {holdings} = computeHoldings(accId);
   const symbolsSeen = new Set();
+  holdings.forEach(h=>symbolsSeen.add(h.symbol));
+  const symbols = Array.from(symbolsSeen);
+  if(symbols.length===0){ stampToast('目前無庫存可更新', true); return; }
+  stampToast('正在抓取最新收盤價…');
+
+  let quotes = {};
+  try{
+    quotes = await fetchMisQuotes(symbols);
+  }catch(e){ console.error('MIS bulk quote fetch failed', e); }
+
   let updated = 0, notFound = [];
-  holdings.forEach(h=>{
-    if(symbolsSeen.has(h.symbol)) return;
-    symbolsSeen.add(h.symbol);
-    const entry = snap.byCode[h.symbol];
-    if(entry && entry.close!=null){
-      const existing = state.priceLogs.find(p=>p.date===today && p.symbol===h.symbol);
-      if(existing) existing.price = entry.close;
-      else state.priceLogs.push({id:uid(), date:today, symbol:h.symbol, price:entry.close});
+  const stillMissing = symbols.filter(s=>!(quotes[s] && quotes[s].price!=null));
+
+  symbols.forEach(symbol=>{
+    const q = quotes[symbol];
+    if(q && q.price!=null){
+      upsertPriceLog(symbol, q.date||today, q.price);
       updated++;
-    } else {
-      notFound.push(h.symbol);
     }
   });
+
+  if(stillMissing.length>0){
+    // fall back to the heavier whole-market snapshot for whatever the light endpoint missed
+    try{
+      const snap = await fetchTaiwanMarketSnapshot(true);
+      if(snap){
+        stillMissing.forEach(symbol=>{
+          const entry = snap.byCode[symbol];
+          if(entry && entry.close!=null){
+            upsertPriceLog(symbol, today, entry.close);
+            updated++;
+          } else {
+            notFound.push(symbol);
+          }
+        });
+      } else {
+        notFound.push(...stillMissing);
+      }
+    }catch(e){
+      console.error('fallback snapshot fetch failed', e);
+      notFound.push(...stillMissing);
+    }
+  }
+
   if(updated>0){
     saveState(false);
     render();
-    stampToast(`已更新 ${updated} 檔收盤價${notFound.length?'，'+notFound.length+' 檔查無資料':''}`);
+    stampToast(`已更新 ${updated} 檔最新價格${notFound.length?'，'+notFound.length+' 檔查無資料':''}`);
   } else {
-    stampToast(notFound.length?'查無這些股票代號的收盤價（可能尚未開盤或代號有誤）':'目前無庫存可更新', true);
+    stampToast('無法取得股價資料，請確認網路連線或稍後再試', true);
   }
 }
 
@@ -691,6 +718,11 @@ function latestPrice(symbol, asOfDate){
   logs.sort((a,b)=>a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   return logs[logs.length-1].price;
 }
+function upsertPriceLog(symbol, date, price){
+  const existing = state.priceLogs.find(p=>p.symbol===symbol && p.date===date);
+  if(existing) existing.price = price;
+  else state.priceLogs.push({id:uid(), date, symbol, price});
+}
 
 /* ============================= MARKET DATA (TWSE / TPEx open data — free, no key) ============================= */
 // Fetches run in the person's own browser at click-time; nothing is proxied through Claude.
@@ -703,11 +735,20 @@ async function fetchJsonWithCorsFallback(url){
   try{
     const res = await fetch(url);
     if(res.ok) return await res.json();
-  }catch(e){ /* fall through to proxy */ }
-  const proxied = 'https://corsproxy.io/?url=' + encodeURIComponent(url);
-  const res2 = await fetch(proxied);
-  if(!res2.ok) throw new Error('fetch failed: ' + res2.status);
-  return await res2.json();
+  }catch(e){ /* fall through to proxy chain */ }
+  const proxies = [
+    u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u)
+  ];
+  let lastErr = null;
+  for(const buildProxyUrl of proxies){
+    try{
+      const res = await fetch(buildProxyUrl(url));
+      if(res.ok) return await res.json();
+      lastErr = new Error('fetch failed: ' + res.status);
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('fetch failed');
 }
 
 function rocToIso(rocStr){
@@ -722,6 +763,36 @@ function numOrNull(v){
   if(v==null || v==='') return null;
   const n = parseFloat(String(v).replace(/,/g,''));
   return isNaN(n) ? null : n;
+}
+
+// Lightweight per-symbol (or small-batch) quote endpoint — payload is tiny (a few KB even for
+// many symbols), unlike the whole-market snapshots below, so it's much less likely to exceed a
+// CORS proxy's size limits. This is tried first for both single lookups and bulk updates.
+async function fetchMisQuotes(symbols){
+  const uniqueSymbols = Array.from(new Set((symbols||[]).map(s=>String(s).trim().toUpperCase()))).filter(Boolean);
+  if(uniqueSymbols.length===0) return {};
+  const chParts = [];
+  uniqueSymbols.forEach(s=>{ chParts.push(`tse_${s}.tw`); chParts.push(`otc_${s}.tw`); });
+  const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(chParts.join('|'))}&json=1&delay=0`;
+  const json = await fetchJsonWithCorsFallback(url);
+  const result = {};
+  (json.msgArray||[]).forEach(item=>{
+    const code = item.c;
+    if(!code || !item.ex) return; // empty ex = no match on that market slot
+    const zPrice = numOrNull(item.z);
+    const yPrice = numOrNull(item.y);
+    const price = (zPrice!=null && zPrice>0) ? zPrice : yPrice;
+    if(price==null) return;
+    if(!result[code] || result[code].price==null){
+      result[code] = {
+        name: item.n || item.nf || '',
+        price,
+        market: item.ex==='tse' ? '上市' : (item.ex==='otc' ? '上櫃' : ''),
+        date: item.d ? `${item.d.slice(0,4)}-${item.d.slice(4,6)}-${item.d.slice(6,8)}` : todayStr()
+      };
+    }
+  });
+  return result;
 }
 
 async function ensureTwseAllCache(){
@@ -775,6 +846,19 @@ async function lookupStockInfo(symbol, dateIso){
   symbol = (symbol||'').trim().toUpperCase();
   if(!symbol) return {ok:false, reason:'股票代號空白'};
   dateIso = dateIso || todayStr();
+  const isLatestRequest = dateIso === todayStr();
+
+  // Try the small, single-symbol quote endpoint first — much less likely to hit a CORS
+  // proxy's payload-size limit than the whole-market snapshots below.
+  if(isLatestRequest){
+    try{
+      const quotes = await fetchMisQuotes([symbol]);
+      const q = quotes[symbol];
+      if(q && q.price!=null){
+        return {ok:true, name:q.name, price:q.price, date:q.date||dateIso, market:q.market};
+      }
+    }catch(e){ console.error('MIS lookup failed', e); }
+  }
 
   try{
     const twseAll = await ensureTwseAllCache();
