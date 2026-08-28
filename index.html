@@ -731,9 +731,19 @@ function upsertPriceLog(symbol, date, price){
 let twseAllCache = null;   // {date:'YYYY-MM-DD', bySymbol:{code:{name,close}}}
 let tpexAllCache = null;   // same shape, best-effort field parsing (TPEx's schema is less documented)
 
+async function fetchWithTimeout(url, ms){
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), ms||6000);
+  try{
+    return await fetch(url, {signal: controller.signal});
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchJsonWithCorsFallback(url){
   try{
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, 6000);
     if(res.ok) return await res.json();
   }catch(e){ /* fall through to proxy chain */ }
   const proxies = [
@@ -743,12 +753,21 @@ async function fetchJsonWithCorsFallback(url){
   let lastErr = null;
   for(const buildProxyUrl of proxies){
     try{
-      const res = await fetch(buildProxyUrl(url));
+      const res = await fetchWithTimeout(buildProxyUrl(url), 6000);
       if(res.ok) return await res.json();
       lastErr = new Error('fetch failed: ' + res.status);
     }catch(e){ lastErr = e; }
   }
   throw lastErr || new Error('fetch failed');
+}
+
+// Belt-and-suspenders: guarantees the caller gets a result within `ms`, even if something
+// deep in the fetch/fallback chain unexpectedly never settles.
+function withOverallTimeout(promise, ms){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=> setTimeout(()=>reject(new Error('操作逾時')), ms))
+  ]);
 }
 
 function rocToIso(rocStr){
@@ -1615,7 +1634,7 @@ function openTransactionModal(opts){
           const origText = lookupBtn.textContent;
           lookupBtn.textContent = '查詢中…'; lookupBtn.disabled = true;
           try{
-            const info = await lookupStockInfo(symbol, date);
+            const info = await withOverallTimeout(lookupStockInfo(symbol, date), 20000);
             if(!info.ok){ stampToast(info.reason || '查詢失敗，請手動輸入', true); return; }
             if(info.name) root.querySelector('#txName').value = info.name;
             if(/^00/.test(symbol)) root.querySelector('#txCategory').value = 'etf';
@@ -1947,7 +1966,7 @@ function openPriceModal(presetSymbol){
       const origText = btn.textContent;
       btn.textContent = '查詢中…'; btn.disabled = true;
       try{
-        const info = await lookupStockInfo(symbol, date);
+        const info = await withOverallTimeout(lookupStockInfo(symbol, date), 20000);
         if(!info.ok){ stampToast(info.reason || '查詢失敗，請手動輸入', true); return; }
         if(info.price!=null){
           root.querySelector('#priceValue').value = info.price;
@@ -2355,7 +2374,10 @@ document.addEventListener('click', (e)=>{
         const origText = btn.textContent;
         btn.textContent = '更新中…'; btn.disabled = true;
         try{
-          await bulkFetchTodayPrices();
+          await withOverallTimeout(bulkFetchTodayPrices(), 30000);
+        }catch(e){
+          console.error(e);
+          stampToast('查詢逾時，請確認網路連線後再試一次', true);
         } finally {
           btn.textContent = origText; btn.disabled = false;
         }
