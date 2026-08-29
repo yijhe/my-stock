@@ -850,6 +850,29 @@ async function fetchTwseHistorical(symbol, dateIso){
   return {name, price:row ? numOrNull(row[6]) : null, date:dateIso};
 }
 
+
+// 若指定日期為週末、假日或休市日，往前尋找最近一次有成交資料的上市收盤價。
+async function fetchTwseLatestCloseOnOrBefore(symbol, dateIso, maxLookbackDays=15){
+  if(!symbol || !dateIso) return null;
+  const base = new Date(dateIso + 'T12:00:00');
+  if(Number.isNaN(base.getTime())) return null;
+
+  for(let offset=0; offset<=maxLookbackDays; offset++){
+    const d = new Date(base);
+    d.setDate(base.getDate() - offset);
+    const iso = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if(d.getDay()===0 || d.getDay()===6) continue;
+
+    try{
+      const hist = await fetchTwseHistorical(symbol, iso);
+      if(hist && hist.price!=null) return {name:hist.name, price:hist.price, date:iso};
+    }catch(e){
+      console.warn('TWSE previous close lookup failed', iso, e);
+    }
+  }
+  return null;
+}
+
 // 回傳 {ok, name, price, date, market, note, reason}
 async function lookupStockInfo(symbol, dateIso){
   symbol = String(symbol||'').trim().toUpperCase();
@@ -864,11 +887,11 @@ async function lookupStockInfo(symbol, dateIso){
 
     // 若整體快照失敗，仍最後嘗試一次 TWSE 個股歷史資料，以免上市股票被錯判。
     try{
-      const hist = await withOverallTimeout(fetchTwseHistorical(symbol, dateIso), 10000);
+      const hist = await withOverallTimeout(fetchTwseLatestCloseOnOrBefore(symbol, dateIso, 15), 16000);
       if(hist && hist.name){
         return {
-          ok:true, name:hist.name, price:hist.price, date:dateIso, market:'上市',
-          note:hist.price!=null ? '' : `已辨識為上市股票，但 ${dateIso} 查無收盤價`
+          ok:true, name:hist.name, price:hist.price, date:hist.date||dateIso, market:'上市',
+          note:(hist.date && hist.date!==dateIso) ? `${dateIso} 無收盤資料，已自動帶入最近交易日 ${hist.date} 的收盤價。` : ''
         };
       }
     }catch(_){}
@@ -886,40 +909,43 @@ async function lookupStockInfo(symbol, dateIso){
       return {ok:true, name:entry.name, price:entry.close, date:entry.date, market:entry.market};
     }
 
-    // 上市股票再嘗試抓指定日期的歷史收盤價
+    // 上市股票：指定日期若休市，往前尋找最近一次收盤價。
     if(entry.market==='上市'){
       try{
-        const hist = await withOverallTimeout(fetchTwseHistorical(symbol, dateIso), 10000);
+        const hist = await withOverallTimeout(fetchTwseLatestCloseOnOrBefore(symbol, dateIso, 15), 16000);
         if(hist && hist.price!=null){
-          return {ok:true, name:hist.name||entry.name, price:hist.price, date:dateIso, market:'上市'};
+          return {
+            ok:true, name:hist.name||entry.name, price:hist.price, date:hist.date, market:'上市',
+            note:hist.date!==dateIso ? `${dateIso} 為非交易日或無收盤資料，已自動帶入最近交易日 ${hist.date} 的收盤價。` : ''
+          };
         }
       }catch(e){
-        console.warn('TWSE historical lookup failed', e);
+        console.warn('TWSE latest previous close lookup failed', e);
       }
     }
 
-    const latestText = entry.date
-      ? `最新交易日 ${entry.date}${entry.close!=null ? ` 收盤 ${fmtMoney(entry.close)}` : ''}`
-      : '已取得最新市場資料';
+    // 上櫃每日快照本身就是最近交易日資料；上市歷史查詢失敗時也可使用快照備援。
+    if(entry.close!=null && entry.date && entry.date <= dateIso){
+      return {
+        ok:true, name:entry.name||symbol, price:entry.close, date:entry.date, market:entry.market,
+        note:entry.date!==dateIso ? `${dateIso} 為非交易日或無收盤資料，已自動帶入最近交易日 ${entry.date} 的收盤價。` : ''
+      };
+    }
 
     return {
-      ok:true,
-      name:entry.name || symbol,
-      price:null,
-      date:entry.date || dateIso,
-      market:entry.market,
-      note:`已辨識為${entry.market}「${entry.name||symbol}」；${dateIso} 無可用收盤價。${latestText}，成交價請依實際買進價格填寫。`
+      ok:true, name:entry.name||symbol, price:null, date:entry.date||dateIso, market:entry.market,
+      note:`已辨識為${entry.market}「${entry.name||symbol}」，但暫時無法取得最近收盤價，成交價請手動輸入。`
     };
   }
 
   // 快照沒有代號時，若 TWSE 正常，仍可用歷史 API 再驗證一次上市股票。
   if(snap.status.twse){
     try{
-      const hist = await withOverallTimeout(fetchTwseHistorical(symbol, dateIso), 10000);
+      const hist = await withOverallTimeout(fetchTwseLatestCloseOnOrBefore(symbol, dateIso, 15), 16000);
       if(hist && hist.name){
         return {
-          ok:true, name:hist.name, price:hist.price, date:dateIso, market:'上市',
-          note:hist.price!=null ? '' : `已辨識為上市股票，但 ${dateIso} 查無收盤價`
+          ok:true, name:hist.name, price:hist.price, date:hist.date||dateIso, market:'上市',
+          note:(hist.date && hist.date!==dateIso) ? `${dateIso} 無收盤資料，已自動帶入最近交易日 ${hist.date} 的收盤價。` : ''
         };
       }
     }catch(e){
@@ -2025,7 +2051,7 @@ function openPriceModal(presetSymbol){
       <div class="form-row"><label>日期</label><input type="date" id="priceDate" value="${todayStr()}" required></div>
       <div class="form-row"><label>收盤價 <button type="button" class="btn-text" id="priceLookupBtn">🔍 自動抓取</button></label><input type="number" step="0.01" min="0" id="priceValue" required></div>
     </div>
-    <div class="form-hint">自動抓取取自證交所／櫃買中心公開資料；若瀏覽器限制外部連線，程式會明確顯示連線問題，不會再誤判為股票代號不存在。查不到指定日期價格時可手動輸入。用於試算未實現損益與每日盈虧走勢，不影響已成交的交易紀錄。</div>
+    <div class="form-hint">自動抓取取自證交所／櫃買中心公開資料；若選擇日期為週末、國定假日或休市日，會自動帶入該日期以前最近一個交易日的收盤價。用於試算未實現損益與每日盈虧走勢，不影響已成交的交易紀錄。</div>
     <div class="modal-actions">
       <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
       <button type="submit" class="btn-stamp">儲存價格</button>
