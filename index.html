@@ -538,135 +538,112 @@ function calcDefaultTax(shares, price, category, isDayTrade){
 }
 
 /* ============================= TAIWAN MARKET DATA (TWSE / TPEx open data) ============================= */
-// 2026-08 修正版：只使用 TWSE / TPEx 官方 OpenAPI 作為「最新價格」來源。
-// 避免 mis.twse.com.tw + 公共 CORS Proxy 串聯造成 iPhone/Safari 長時間卡在「查詢中／更新中」。
-let marketDataCache = null; // {byCode:{CODE:{name,close,date,market}}, fetchedAt}
+// Public, no-auth open data endpoints. Used to auto-fill company names and fetch today's closing prices.
+// TWSE (上市): whole-market daily quotes, includes Code/Name/ClosingPrice.
+// TPEx (上櫃): whole-market daily quotes, includes SecuritiesCompanyCode/Close and a company-name field
+// (field name not 100% verified, so we try a few candidates defensively).
+let marketDataCache = null; // {byCode: {CODE:{name, close}}, fetchedAt}
 let marketDataFetchInFlight = null;
-
-function parseMarketDate(raw){
-  if(!raw) return null;
-  const s = String(raw).trim().replace(/\//g,'');
-  if(/^\d{8}$/.test(s)) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`; // YYYYMMDD
-  if(/^\d{7}$/.test(s)) { // ROC yyyMMdd
-    const y = parseInt(s.slice(0,3),10) + 1911;
-    return `${y}-${s.slice(3,5)}-${s.slice(5,7)}`;
-  }
-  return null;
-}
-
-async function fetchOfficialJson(url, timeoutMs){
-  const controller = new AbortController();
-  const timer = setTimeout(()=>controller.abort(), timeoutMs || 8000);
-  try{
-    const res = await fetch(url, {
-      method:'GET',
-      mode:'cors',
-      cache:'no-store',
-      headers:{'Accept':'application/json'} ,
-      signal:controller.signal
-    });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 async function fetchTaiwanMarketSnapshot(forceRefresh){
   if(marketDataFetchInFlight) return marketDataFetchInFlight;
-  if(marketDataCache && !forceRefresh && Date.now()-marketDataCache.fetchedAt < 5*60*1000) return marketDataCache;
-
+  if(marketDataCache && !forceRefresh) return marketDataCache;
   marketDataFetchInFlight = (async ()=>{
     const byCode = {};
-    const jobs = [
-      fetchOfficialJson('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL', 8000),
-      fetchOfficialJson('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes', 8000)
-    ];
-    const [twseRes, tpexRes] = await Promise.allSettled(jobs);
-    let successCount = 0;
-
-    if(twseRes.status==='fulfilled' && Array.isArray(twseRes.value)){
-      successCount++;
-      twseRes.value.forEach(r=>{
-        const code = String(r.Code || '').trim();
-        if(!code) return;
-        const close = numOrNull(r.ClosingPrice);
-        byCode[code] = {
-          name:r.Name || '',
-          close,
-          date:parseMarketDate(r.Date),
-          market:'上市'
-        };
+    let anySuccess = false;
+    try{
+      const rows = await fetchJsonWithCorsFallback('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+      rows.forEach(r=>{
+        if(r.Code){
+          const close = parseFloat(r.ClosingPrice);
+          byCode[r.Code] = { name: r.Name||'', close: isFinite(close)&&r.ClosingPrice!==''?close:null };
+        }
       });
-    } else if(twseRes.status==='rejected') {
-      console.error('TWSE OpenAPI failed', twseRes.reason);
-    }
-
-    if(tpexRes.status==='fulfilled' && Array.isArray(tpexRes.value)){
-      successCount++;
-      tpexRes.value.forEach(r=>{
-        const code = String(r.SecuritiesCompanyCode || r.Code || r.CompanyCode || r.SecurityCode || '').trim();
+      anySuccess = true;
+    }catch(e){ console.error('TWSE market fetch failed', e); }
+    try{
+      const rows2 = await fetchJsonWithCorsFallback('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
+      rows2.forEach(r=>{
+        const code = r.SecuritiesCompanyCode || r.Code || r.CommonStock;
         if(!code) return;
-        const close = numOrNull(r.Close != null ? r.Close : (r.ClosingPrice != null ? r.ClosingPrice : r.Close_Price));
-        const name = r.CompanyName || r.Name || r.CommonName || r.SecuritiesName || r.CodeName || '';
-        const date = parseMarketDate(r.Date || r.date);
-        byCode[code] = {name, close, date, market:'上櫃'};
+        const name = r.CompanyName || r.Name || r.CodeName || (byCode[code]&&byCode[code].name) || '';
+        const closeRaw = r.Close!=null ? r.Close : r.ClosingPrice;
+        const close = parseFloat(closeRaw);
+        if(!byCode[code]) byCode[code] = { name, close: isFinite(close)?close:null };
+        else { if(!byCode[code].name) byCode[code].name = name; if(byCode[code].close==null && isFinite(close)) byCode[code].close = close; }
       });
-    } else if(tpexRes.status==='rejected') {
-      console.error('TPEx OpenAPI failed', tpexRes.reason);
-    }
-
-    if(successCount===0) throw new Error('TWSE / TPEx 官方行情服務目前均無法連線');
-    marketDataCache = {byCode, fetchedAt:Date.now()};
+      anySuccess = true;
+    }catch(e){ console.error('TPEx market fetch failed', e); }
+    marketDataFetchInFlight = null;
+    if(!anySuccess) return null;
+    marketDataCache = { byCode, fetchedAt: Date.now() };
     return marketDataCache;
   })();
-
-  try{
-    return await marketDataFetchInFlight;
-  } finally {
-    marketDataFetchInFlight = null;
-  }
+  return marketDataFetchInFlight;
 }
 
 async function lookupCompanyName(code){
   if(!code) return null;
-  try{
-    const snap = await fetchTaiwanMarketSnapshot(false);
-    const entry = snap.byCode[String(code).trim().toUpperCase()];
-    return entry ? entry.name : null;
-  }catch(e){
-    console.error(e);
-    return null;
-  }
+  const snap = await fetchTaiwanMarketSnapshot();
+  if(!snap) return null;
+  const entry = snap.byCode[code];
+  return entry ? entry.name : null;
 }
 
 async function bulkFetchTodayPrices(){
   const today = todayStr();
   const accId = state.activeAccountId;
   const {holdings} = computeHoldings(accId);
-  const symbols = Array.from(new Set(holdings.map(h=>String(h.symbol).trim().toUpperCase()))).filter(Boolean);
+  const symbolsSeen = new Set();
+  holdings.forEach(h=>symbolsSeen.add(h.symbol));
+  const symbols = Array.from(symbolsSeen);
   if(symbols.length===0){ stampToast('目前無庫存可更新', true); return; }
   stampToast('正在抓取最新收盤價…');
 
-  const snap = await fetchTaiwanMarketSnapshot(true);
-  let updated = 0;
-  const notFound = [];
-  symbols.forEach(symbol=>{
-    const entry = snap.byCode[symbol];
-    if(entry && entry.close!=null){
-      upsertPriceLog(symbol, entry.date || today, entry.close);
-      updated++;
-    }else{
-      notFound.push(symbol);
+  // Try the whole-market snapshot first — this is the original, proven-working method.
+  let updated = 0, notFound = [];
+  let stillMissing = symbols;
+  try{
+    const snap = await fetchTaiwanMarketSnapshot(true);
+    if(snap){
+      stillMissing = [];
+      symbols.forEach(symbol=>{
+        const entry = snap.byCode[symbol];
+        if(entry && entry.close!=null){
+          upsertPriceLog(symbol, today, entry.close);
+          updated++;
+        } else {
+          stillMissing.push(symbol);
+        }
+      });
     }
-  });
+  }catch(e){ console.error('whole-market bulk fetch failed', e); }
+
+  if(stillMissing.length>0){
+    // small single/batch-symbol endpoint as a fallback for whatever the snapshot missed
+    try{
+      const quotes = await fetchMisQuotes(stillMissing);
+      stillMissing.forEach(symbol=>{
+        const q = quotes[symbol];
+        if(q && q.price!=null){
+          upsertPriceLog(symbol, q.date||today, q.price);
+          updated++;
+        } else {
+          notFound.push(symbol);
+        }
+      });
+    }catch(e){
+      console.error('MIS fallback bulk fetch failed', e);
+      notFound.push(...stillMissing);
+    }
+  }
 
   if(updated>0){
     saveState(false);
     render();
     stampToast(`已更新 ${updated} 檔最新價格${notFound.length?'，'+notFound.length+' 檔查無資料':''}`);
-  }else{
-    throw new Error('官方行情已回應，但庫存代號均查無價格');
+  } else {
+    stampToast('無法取得股價資料，請確認網路連線或稍後再試', true);
   }
 }
 
@@ -746,17 +723,59 @@ function upsertPriceLog(symbol, date, price){
   else state.priceLogs.push({id:uid(), date, symbol, price});
 }
 
-/* ============================= MARKET DATA LOOKUP ============================= */
+/* ============================= MARKET DATA (TWSE / TPEx open data — free, no key) ============================= */
+// Fetches run in the person's own browser at click-time; nothing is proxied through Claude.
+// TWSE/TPEx's open-data endpoints may not send CORS headers for direct browser fetch in every
+// environment, so we try a direct fetch first and fall back to a public CORS proxy automatically.
+let twseAllCache = null;   // {date:'YYYY-MM-DD', bySymbol:{code:{name,close}}}
+let tpexAllCache = null;   // same shape, best-effort field parsing (TPEx's schema is less documented)
+
+async function fetchWithTimeout(url, ms){
+  const controller = new AbortController();
+  const timer = setTimeout(()=>controller.abort(), ms||6000);
+  try{
+    return await fetch(url, {signal: controller.signal});
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchJsonWithCorsFallback(url){
+  try{
+    const res = await fetchWithTimeout(url, 6000);
+    if(res.ok) return await res.json();
+  }catch(e){ /* fall through to proxy chain */ }
+  const proxies = [
+    u => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+    u => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u)
+  ];
+  let lastErr = null;
+  for(const buildProxyUrl of proxies){
+    try{
+      const res = await fetchWithTimeout(buildProxyUrl(url), 6000);
+      if(res.ok) return await res.json();
+      lastErr = new Error('fetch failed: ' + res.status);
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr || new Error('fetch failed');
+}
+
+// Belt-and-suspenders: guarantees the caller gets a result within `ms`, even if something
+// deep in the fetch/fallback chain unexpectedly never settles.
 function withOverallTimeout(promise, ms){
-  let timer;
-  const timeout = new Promise((_, reject)=>{
-    timer = setTimeout(()=>reject(new Error('操作逾時')), ms);
-  });
-  return Promise.race([promise, timeout]).finally(()=>clearTimeout(timer));
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=> setTimeout(()=>reject(new Error('操作逾時')), ms))
+  ]);
 }
 
 function rocToIso(rocStr){
-  return parseMarketDate(rocStr);
+  if(!rocStr) return null;
+  const s = String(rocStr).trim();
+  const y = parseInt(s.slice(0,3),10) + 1911;
+  const m = s.slice(3,5), d = s.slice(5,7);
+  if(!m || !d) return null;
+  return `${y}-${m}-${d}`;
 }
 function numOrNull(v){
   if(v==null || v==='') return null;
@@ -764,12 +783,72 @@ function numOrNull(v){
   return isNaN(n) ? null : n;
 }
 
-// 歷史上市收盤價：保留官方 TWSE 月資料查詢，且不再經過公共 CORS Proxy。
+// Lightweight per-symbol (or small-batch) quote endpoint — payload is tiny (a few KB even for
+// many symbols), unlike the whole-market snapshots below, so it's much less likely to exceed a
+// CORS proxy's size limits. This is tried first for both single lookups and bulk updates.
+async function fetchMisQuotes(symbols){
+  const uniqueSymbols = Array.from(new Set((symbols||[]).map(s=>String(s).trim().toUpperCase()))).filter(Boolean);
+  if(uniqueSymbols.length===0) return {};
+  const chParts = [];
+  uniqueSymbols.forEach(s=>{ chParts.push(`tse_${s}.tw`); chParts.push(`otc_${s}.tw`); });
+  const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${encodeURIComponent(chParts.join('|'))}&json=1&delay=0`;
+  const json = await fetchJsonWithCorsFallback(url);
+  const result = {};
+  (json.msgArray||[]).forEach(item=>{
+    const code = item.c;
+    if(!code || !item.ex) return; // empty ex = no match on that market slot
+    const zPrice = numOrNull(item.z);
+    const yPrice = numOrNull(item.y);
+    const price = (zPrice!=null && zPrice>0) ? zPrice : yPrice;
+    if(price==null) return;
+    if(!result[code] || result[code].price==null){
+      result[code] = {
+        name: item.n || item.nf || '',
+        price,
+        market: item.ex==='tse' ? '上市' : (item.ex==='otc' ? '上櫃' : ''),
+        date: item.d ? `${item.d.slice(0,4)}-${item.d.slice(4,6)}-${item.d.slice(6,8)}` : todayStr()
+      };
+    }
+  });
+  return result;
+}
+
+async function ensureTwseAllCache(){
+  if(twseAllCache) return twseAllCache;
+  const data = await fetchJsonWithCorsFallback('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+  const bySymbol = {};
+  let date = null;
+  data.forEach(r=>{
+    bySymbol[r.Code] = {name: r.Name, close: numOrNull(r.ClosingPrice)};
+    if(!date) date = r.Date;
+  });
+  twseAllCache = {date: rocToIso(date), bySymbol};
+  return twseAllCache;
+}
+
+async function ensureTpexAllCache(){
+  if(tpexAllCache) return tpexAllCache;
+  const data = await fetchJsonWithCorsFallback('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes');
+  const bySymbol = {};
+  let date = null;
+  data.forEach(r=>{
+    const code = r.Code || r.SecuritiesCompanyCode || r.CompanyCode || r.SecurityCode;
+    const name = r.Name || r.CompanyName || r.CommonName || r.SecuritiesName;
+    const close = numOrNull(r.Close || r.ClosingPrice || r.Close_Price);
+    const d = r.Date || r.date;
+    if(code){ bySymbol[code] = {name, close}; }
+    if(!date && d) date = d;
+  });
+  tpexAllCache = {date: rocToIso(date), bySymbol};
+  return tpexAllCache;
+}
+
 async function fetchTwseHistorical(symbol, dateIso){
   const [y,m,d] = dateIso.split('-');
   const url = `https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date=${y}${m}01&stockNo=${encodeURIComponent(symbol)}`;
-  const json = await fetchOfficialJson(url, 8000);
+  const json = await fetchJsonWithCorsFallback(url);
   if(json.stat!=='OK' || !Array.isArray(json.data)) return null;
+  // title looks like "109年09月 2330 台積電 各日成交資訊" — strip the ROC year/month, the stock code, and the trailing suffix
   const name = (json.title||'')
     .replace(/^\d+年\d+月\s*/, '')
     .replace(new RegExp('^' + symbol.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + '\\s*'), '')
@@ -777,52 +856,55 @@ async function fetchTwseHistorical(symbol, dateIso){
     .trim();
   const rocTarget = `${parseInt(y,10)-1911}/${m}/${d}`;
   const row = json.data.find(r=>r[0]===rocTarget);
-  return {name, price:row ? numOrNull(row[6]) : null, date:dateIso};
+  return {name, price: row ? numOrNull(row[6]) : null, date: dateIso};
 }
 
+// Looks up {name, price, date, market, note} for a stock code, preferring the requested date.
 async function lookupStockInfo(symbol, dateIso){
   symbol = (symbol||'').trim().toUpperCase();
   if(!symbol) return {ok:false, reason:'股票代號空白'};
   dateIso = dateIso || todayStr();
 
-  // 今天／最新：直接查兩個官方 OpenAPI 的最新交易日快照。
-  if(dateIso === todayStr()){
-    try{
-      const snap = await fetchTaiwanMarketSnapshot(false);
-      const e = snap.byCode[symbol];
-      if(e){
-        return {
-          ok:true,
-          name:e.name || '',
-          price:e.close,
-          date:e.date || dateIso,
-          market:e.market || ''
-        };
+  // Try the whole-market snapshot first — this is the original, proven-working method.
+  try{
+    const twseAll = await ensureTwseAllCache();
+    if(twseAll.bySymbol[symbol]){
+      const info = twseAll.bySymbol[symbol];
+      if(twseAll.date === dateIso){
+        return {ok:true, name:info.name, price:info.close, date:twseAll.date, market:'上市'};
       }
-      return {ok:false, reason:'查無此股票代號（目前支援上市／上櫃股票與 ETF）'};
-    }catch(e){
-      console.error('latest quote lookup failed', e);
-      return {ok:false, reason:'無法連線至證交所／櫃買中心行情服務'};
+      const hist = await fetchTwseHistorical(symbol, dateIso).catch(()=>null);
+      if(hist && hist.price!=null) return {ok:true, name:hist.name||info.name, price:hist.price, date:dateIso, market:'上市'};
+      return {ok:true, name:info.name, price:null, date:twseAll.date, market:'上市', note:`查無 ${dateIso} 收盤價，僅取得公司名稱與最新（${twseAll.date}）收盤價 ${info.close!=null?fmtMoney(info.close):'—'} 供參考`};
     }
+    const hist = await fetchTwseHistorical(symbol, dateIso).catch(()=>null);
+    if(hist && (hist.price!=null || hist.name)) return {ok:true, name:hist.name, price:hist.price, date:dateIso, market:'上市'};
+  }catch(e){ console.error('TWSE lookup failed', e); }
+
+  try{
+    const tpexAll = await ensureTpexAllCache();
+    if(tpexAll.bySymbol[symbol]){
+      const info = tpexAll.bySymbol[symbol];
+      const matches = tpexAll.date === dateIso;
+      return {ok:true, name:info.name, price: matches? info.close : null, date: tpexAll.date, market:'上櫃',
+        note: matches? '' : `上櫃僅提供最新交易日（${tpexAll.date}）資料`};
+    }
+  }catch(e){ console.error('TPEx lookup failed', e); }
+
+  // Small single-symbol endpoint as a last resort — only reached if the proven method
+  // above didn't have this symbol at all (e.g. a very recent listing).
+  const isLatestRequest = dateIso === todayStr();
+  if(isLatestRequest){
+    try{
+      const quotes = await fetchMisQuotes([symbol]);
+      const q = quotes[symbol];
+      if(q && q.price!=null){
+        return {ok:true, name:q.name, price:q.price, date:q.date||dateIso, market:q.market};
+      }
+    }catch(e){ console.error('MIS lookup failed', e); }
   }
 
-  // 非今日日期：上市股票可查歷史；上櫃歷史仍建議手動輸入，以避免再次引入不穩定代理服務。
-  try{
-    const hist = await fetchTwseHistorical(symbol, dateIso);
-    if(hist && (hist.price!=null || hist.name)){
-      return {ok:true, name:hist.name||'', price:hist.price, date:dateIso, market:'上市'};
-    }
-  }catch(e){ console.error('TWSE historical lookup failed', e); }
-
-  // 至少用最新快照辨識名稱／市場，讓使用者知道是否為上櫃標的。
-  try{
-    const snap = await fetchTaiwanMarketSnapshot(false);
-    const e = snap.byCode[symbol];
-    if(e){
-      return {ok:true, name:e.name||'', price:null, date:e.date||'', market:e.market||'', note:`${e.market||''}歷史指定日期目前未自動帶價，請手動輸入成交價／收盤價`};
-    }
-  }catch(e){ console.error(e); }
-  return {ok:false, reason:'查無此股票代號或該日期資料'};
+  return {ok:false, reason:'查無此股票代號（僅涵蓋上市／上櫃普通股票及 ETF）'};
 }
 
 function enrichHoldings(holdings, asOfDate){
@@ -1552,7 +1634,7 @@ function openTransactionModal(opts){
           const origText = lookupBtn.textContent;
           lookupBtn.textContent = '查詢中…'; lookupBtn.disabled = true;
           try{
-            const info = await withOverallTimeout(lookupStockInfo(symbol, date), 12000);
+            const info = await withOverallTimeout(lookupStockInfo(symbol, date), 35000);
             if(!info.ok){ stampToast(info.reason || '查詢失敗，請手動輸入', true); return; }
             if(info.name) root.querySelector('#txName').value = info.name;
             if(/^00/.test(symbol)) root.querySelector('#txCategory').value = 'etf';
@@ -1884,7 +1966,7 @@ function openPriceModal(presetSymbol){
       const origText = btn.textContent;
       btn.textContent = '查詢中…'; btn.disabled = true;
       try{
-        const info = await withOverallTimeout(lookupStockInfo(symbol, date), 12000);
+        const info = await withOverallTimeout(lookupStockInfo(symbol, date), 35000);
         if(!info.ok){ stampToast(info.reason || '查詢失敗，請手動輸入', true); return; }
         if(info.price!=null){
           root.querySelector('#priceValue').value = info.price;
@@ -2292,7 +2374,7 @@ document.addEventListener('click', (e)=>{
         const origText = btn.textContent;
         btn.textContent = '更新中…'; btn.disabled = true;
         try{
-          await withOverallTimeout(bulkFetchTodayPrices(), 12000);
+          await withOverallTimeout(bulkFetchTodayPrices(), 40000);
         }catch(e){
           console.error(e);
           stampToast('查詢逾時，請確認網路連線後再試一次', true);
