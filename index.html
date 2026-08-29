@@ -279,6 +279,33 @@
     .dash-item{border-right:none; border-bottom:1px dotted var(--paper-line);}
     .cover-title h1{font-size:19px;}
   }
+
+/* ===== v4：紀錄頁表格緊湊化 ===== */
+.compact-record-table{
+  width:100%;
+  table-layout:auto;
+}
+.compact-record-table th,
+.compact-record-table td{
+  padding:7px 8px !important;
+  line-height:1.25;
+  vertical-align:middle;
+  white-space:nowrap;
+}
+.compact-record-table th{font-size:12px;}
+.compact-record-table td{font-size:13px;}
+.compact-record-table th:first-child,
+.compact-record-table td:first-child,
+.compact-record-table th:last-child,
+.compact-record-table td:last-child{width:1%;}
+@media(max-width:700px){
+  .compact-record-table th,
+  .compact-record-table td{
+    padding:6px 6px !important;
+    font-size:12px;
+  }
+}
+
 </style>
 </head>
 <body>
@@ -1371,7 +1398,7 @@ function renderDividendsPanel(){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>配息紀錄</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table>
+  <div class="ledger-wrap"><table class="compact-record-table">
     <thead><tr><th>日期</th><th>股票</th><th class="num">每股配息</th><th class="num">股數</th><th class="num">總金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1408,7 +1435,7 @@ function renderRepaymentPanel(){
   }).join('');
   return `<div class="panel-head"><h3>還款紀錄</h3>${toolsHtml}</div>
   <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">單純記錄每期還了多少錢，不會自動從資金狀況的「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</p>
-  <div class="ledger-wrap"><table>
+  <div class="ledger-wrap"><table class="compact-record-table">
     <thead><tr><th>日期</th><th class="num">還款金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1448,7 +1475,7 @@ function renderManualDailySection(accId){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>手動記錄每日賺賠</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table>
+  <div class="ledger-wrap"><table class="compact-record-table">
     <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1473,7 +1500,7 @@ function renderDailyPanel(){
       <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.divTotal)}</td>
     </tr>`).join('');
     autoHtml = `
-    <div class="ledger-wrap"><table>
+    <div class="ledger-wrap"><table class="compact-record-table">
       <thead><tr><th>日期</th><th class="num">當日損益</th><th class="num">累計總損益</th><th class="num">未實現（快照）</th><th class="num">已實現（累計）</th><th class="num">配息（累計）</th></tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table></div>`;
