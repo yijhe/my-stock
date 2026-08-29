@@ -365,6 +365,14 @@
 .dividend-compact-table th:nth-child(4),.dividend-compact-table td:nth-child(4){width:82px!important}
 .dividend-compact-table th:nth-child(5),.dividend-compact-table td:nth-child(5){width:72px!important}
 .dividend-compact-table th:nth-child(6),.dividend-compact-table td:nth-child(6){width:94px!important}}
+
+/* v7 庫存頁一鍵更新股價 */
+@media(max-width:700px){
+  .panel-tools [data-action="bulk-update-holdings-prices"]{
+    padding:7px 9px;
+    font-size:12px;
+  }
+}
 </style>
 </head>
 <body>
@@ -814,7 +822,7 @@ async function bulkFetchTodayPrices(){
   const symbols = Array.from(new Set(holdings.map(h=>String(h.symbol||'').trim().toUpperCase()))).filter(Boolean);
   if(symbols.length===0){ stampToast('目前無庫存可更新', true); return; }
 
-  stampToast('正在抓取最新收盤價…');
+  stampToast('正在更新庫存最近收盤價…');
   try{
     const snap = await withOverallTimeout(fetchTaiwanMarketSnapshot(true), 18000);
     let updated = 0;
@@ -833,7 +841,7 @@ async function bulkFetchTodayPrices(){
     if(updated>0){
       saveState(false);
       render();
-      stampToast(`已更新 ${updated} 檔最新價格${notFound.length?'，'+notFound.length+' 檔查無行情':''}`);
+      stampToast(`已更新 ${updated} 檔庫存股價${notFound.length?'，'+notFound.length+' 檔查無行情':''}`);
     }else{
       const partial = !snap.status.twse || !snap.status.tpex;
       stampToast(partial ? '行情服務只有部分連線成功，暫時無法更新這些代號' : '官方行情已回應，但這些庫存代號查無價格', true);
@@ -1365,6 +1373,7 @@ function renderHoldingsPanel(){
   return `<div class="panel-head">
     <h3>庫存股票</h3>
     <div class="panel-tools">
+      <button class="btn-secondary" data-action="bulk-update-holdings-prices" title="更新目前庫存中所有股票的最近收盤價">↻ 一鍵更新股價</button>
       <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button>
     </div>
   </div>
@@ -2462,6 +2471,9 @@ document.addEventListener('click', (e)=>{
       break;
     case 'edit-meta': openMetaModal(btn.dataset.accid, btn.dataset.symbol); break;
     case 'update-price': openPriceModal(btn.dataset.symbol); break;
+    case 'bulk-update-holdings-prices':
+      bulkFetchTodayPrices();
+      break;
     case 'open-price-log': openPriceModal(); break;
     case 'open-fundlog': openFundLogModal(); break;
     case 'open-daily-log': openDailyLogModal({type:btn.dataset.type}); break;
