@@ -349,6 +349,22 @@
   .repayment-compact-table td:nth-child(2){width:104px !important;}
 }
 
+
+/* v6 配息紀錄欄位緊湊化 */
+.dividend-compact-table{width:max-content!important;min-width:100%;table-layout:auto!important}
+.dividend-compact-table th:nth-child(1),.dividend-compact-table td:nth-child(1){width:100px!important}
+.dividend-compact-table th:nth-child(2),.dividend-compact-table td:nth-child(2){width:76px!important}
+.dividend-compact-table th:nth-child(3),.dividend-compact-table td:nth-child(3){width:105px!important}
+.dividend-compact-table th:nth-child(4),.dividend-compact-table td:nth-child(4){width:92px!important}
+.dividend-compact-table th:nth-child(5),.dividend-compact-table td:nth-child(5){width:82px!important}
+.dividend-compact-table th:nth-child(6),.dividend-compact-table td:nth-child(6){width:105px!important}
+@media(max-width:700px){
+.dividend-compact-table th:nth-child(1),.dividend-compact-table td:nth-child(1){width:88px!important}
+.dividend-compact-table th:nth-child(2),.dividend-compact-table td:nth-child(2){width:66px!important}
+.dividend-compact-table th:nth-child(3),.dividend-compact-table td:nth-child(3){width:92px!important}
+.dividend-compact-table th:nth-child(4),.dividend-compact-table td:nth-child(4){width:82px!important}
+.dividend-compact-table th:nth-child(5),.dividend-compact-table td:nth-child(5){width:72px!important}
+.dividend-compact-table th:nth-child(6),.dividend-compact-table td:nth-child(6){width:94px!important}}
 </style>
 </head>
 <body>
@@ -1441,7 +1457,7 @@ function renderDividendsPanel(){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>配息紀錄</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table class="compact-record-table">
+  <div class="ledger-wrap"><table class="compact-record-table dividend-compact-table">
     <thead><tr><th>日期</th><th>股票</th><th class="num">每股配息</th><th class="num">股數</th><th class="num">總金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
