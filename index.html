@@ -306,6 +306,49 @@
   }
 }
 
+
+/* ===== v5：指定欄位取消被剩餘空間拉開 =====
+   手動每日盈虧：日期 / 類型 / 金額靠攏
+   還款紀錄：日期 / 還款金額靠攏
+*/
+.manual-daily-table,
+.repayment-compact-table{
+  width:max-content !important;
+  min-width:100%;
+  table-layout:auto !important;
+}
+.manual-daily-table th:nth-child(1),
+.manual-daily-table td:nth-child(1){width:100px !important;}
+.manual-daily-table th:nth-child(2),
+.manual-daily-table td:nth-child(2){width:82px !important;}
+.manual-daily-table th:nth-child(3),
+.manual-daily-table td:nth-child(3){width:110px !important;}
+
+.repayment-compact-table th:nth-child(1),
+.repayment-compact-table td:nth-child(1){width:100px !important;}
+.repayment-compact-table th:nth-child(2),
+.repayment-compact-table td:nth-child(2){width:120px !important;}
+
+/* 數字欄不再吃掉多餘寬度；備註欄吸收剩餘空間 */
+.manual-daily-table th:nth-child(3),
+.manual-daily-table td:nth-child(3),
+.repayment-compact-table th:nth-child(2),
+.repayment-compact-table td:nth-child(2){
+  text-align:right;
+}
+@media(max-width:700px){
+  .manual-daily-table th:nth-child(1),
+  .manual-daily-table td:nth-child(1),
+  .repayment-compact-table th:nth-child(1),
+  .repayment-compact-table td:nth-child(1){width:88px !important;}
+  .manual-daily-table th:nth-child(2),
+  .manual-daily-table td:nth-child(2){width:68px !important;}
+  .manual-daily-table th:nth-child(3),
+  .manual-daily-table td:nth-child(3){width:96px !important;}
+  .repayment-compact-table th:nth-child(2),
+  .repayment-compact-table td:nth-child(2){width:104px !important;}
+}
+
 </style>
 </head>
 <body>
@@ -1435,7 +1478,7 @@ function renderRepaymentPanel(){
   }).join('');
   return `<div class="panel-head"><h3>還款紀錄</h3>${toolsHtml}</div>
   <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">單純記錄每期還了多少錢，不會自動從資金狀況的「借貸資金」扣除，如需反映最新餘額請另外更新資金狀況。</p>
-  <div class="ledger-wrap"><table class="compact-record-table">
+  <div class="ledger-wrap"><table class="compact-record-table repayment-compact-table">
     <thead><tr><th>日期</th><th class="num">還款金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
@@ -1475,7 +1518,7 @@ function renderManualDailySection(accId){
     </tr>`;
   }).join('');
   return `<div class="panel-head"><h3>手動記錄每日賺賠</h3>${toolsHtml}</div>
-  <div class="ledger-wrap"><table class="compact-record-table">
+  <div class="ledger-wrap"><table class="compact-record-table manual-daily-table">
     <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table></div>`;
