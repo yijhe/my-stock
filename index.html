@@ -819,38 +819,82 @@ function upsertPriceLog(symbol, date, price){
 async function bulkFetchTodayPrices(){
   const accId = state.activeAccountId;
   const {holdings} = computeHoldings(accId);
-  const symbols = Array.from(new Set(holdings.map(h=>String(h.symbol||'').trim().toUpperCase()))).filter(Boolean);
-  if(symbols.length===0){ stampToast('目前無庫存可更新', true); return; }
+  const symbols = Array.from(
+    new Set(holdings.map(h=>String(h.symbol||'').trim().toUpperCase()))
+  ).filter(Boolean);
 
-  stampToast('正在更新庫存最近收盤價…');
-  try{
-    const snap = await withOverallTimeout(fetchTaiwanMarketSnapshot(true), 18000);
-    let updated = 0;
-    const notFound = [];
+  if(symbols.length===0){
+    stampToast('目前無庫存可更新', true);
+    return;
+  }
 
-    symbols.forEach(symbol=>{
-      const entry = snap.byCode[symbol];
-      if(entry && entry.close!=null){
-        upsertPriceLog(symbol, entry.date || todayStr(), entry.close);
+  stampToast(`正在更新 ${symbols.length} 檔庫存最近收盤價…`);
+
+  let updated = 0;
+  const failed = [];
+  const today = todayStr();
+
+  // 不再使用整批市場快照 API。
+  // 改為逐檔重用單一股票可正常工作的 lookupStockInfo()，
+  // 可避開部分瀏覽器對 TWSE/TPEx 批次端點的 CORS / 連線限制。
+  for(const symbol of symbols){
+    try{
+      const info = await withOverallTimeout(
+        lookupStockInfo(symbol, today),
+        20000
+      );
+
+      if(info && info.ok && info.price!=null){
+        upsertPriceLog(symbol, info.date || today, info.price);
+
+        // 若成功抓到名稱，也順便補齊庫存 meta/交易名稱，避免只顯示代號。
+        if(info.name){
+          state.holdingsMeta
+            .filter(m=>m.symbol===symbol && (accId==='all' || m.accountId===accId))
+            .forEach(m=>{
+              if(!m.name || m.name===symbol) m.name = info.name;
+            });
+
+          state.transactions
+            .filter(t=>t.symbol===symbol && (accId==='all' || t.accountId===accId))
+            .forEach(t=>{
+              if(!t.name || t.name===symbol) t.name = info.name;
+            });
+        }
+
         updated++;
       }else{
-        notFound.push(symbol);
+        failed.push({
+          symbol,
+          reason:(info && (info.reason || info.note)) || '查無可用收盤價'
+        });
       }
-    });
-
-    if(updated>0){
-      saveState(false);
-      render();
-      stampToast(`已更新 ${updated} 檔庫存股價${notFound.length?'，'+notFound.length+' 檔查無行情':''}`);
-    }else{
-      const partial = !snap.status.twse || !snap.status.tpex;
-      stampToast(partial ? '行情服務只有部分連線成功，暫時無法更新這些代號' : '官方行情已回應，但這些庫存代號查無價格', true);
+    }catch(e){
+      console.error('bulk single-symbol update failed', symbol, e);
+      failed.push({
+        symbol,
+        reason:e && e.message ? e.message : '更新失敗'
+      });
     }
-  }catch(e){
-    console.error('bulkFetchTodayPrices failed', e);
-    stampToast(e.message || '無法連線取得股價資料', true);
+  }
+
+  if(updated>0){
+    saveState(false);
+    render();
+
+    if(failed.length===0){
+      stampToast(`已更新 ${updated} 檔庫存最近收盤價`);
+    }else{
+      stampToast(`已更新 ${updated} 檔，另有 ${failed.length} 檔未能更新：${failed.map(x=>x.symbol).join('、')}`, true);
+    }
+  }else{
+    const detail = failed.length
+      ? failed.map(x=>`${x.symbol}：${x.reason}`).join('；')
+      : '目前無法取得行情';
+    stampToast(`本次沒有股票更新成功。${detail}`, true);
   }
 }
+
 
 /* ============================= ACCOUNT HELPERS ============================= */
 function getRealAccounts(){ return state.accounts; }
