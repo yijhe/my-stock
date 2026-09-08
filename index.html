@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@500;600;700&family=Noto+Sans+TC:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
@@ -373,6 +372,23 @@
     font-size:12px;
   }
 }
+
+/* v9：圖表改為原生 SVG，不依賴 Chart.js / CDN */
+.native-chart-box{height:auto!important;min-height:240px;overflow:hidden}
+.native-chart-svg{display:block;width:100%;height:190px;margin-top:4px}
+.native-donut-wrap{display:flex;align-items:center;justify-content:center;gap:14px;min-height:190px}
+.native-donut-svg{width:150px;height:150px;flex:0 0 150px}
+.native-legend{display:flex;flex-direction:column;gap:5px;max-height:176px;overflow:auto;min-width:0}
+.native-legend-item{font-size:10.5px;color:var(--ink-soft);display:flex;align-items:center;gap:5px;line-height:1.25}
+.native-legend-item strong{color:var(--ink)}
+.native-legend-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+.native-legend-pct{font-family:'IBM Plex Mono',monospace;color:var(--ink)}
+@media(max-width:720px){
+  .native-donut-wrap{flex-direction:column;gap:4px}
+  .native-legend{width:100%;max-height:120px}
+  .native-chart-svg{height:180px}
+}
+
 </style>
 </head>
 <body>
@@ -1299,68 +1315,91 @@ function renderDashboardCharts(){
   const d = computeDashboard(accId);
   const curve = computeEquityCurve(accId);
 
+  function compactMoney(v){
+    const n = Number(v)||0;
+    const a = Math.abs(n);
+    if(a>=1000000) return (n/1000000).toFixed(a>=10000000?0:1)+'M';
+    if(a>=1000) return (n/1000).toFixed(a>=10000?0:1)+'K';
+    return Math.round(n).toLocaleString('en-US');
+  }
+
+  function lineChartSvg(data){
+    if(!data.length) return '<div class="empty-note">尚無交易或收盤價紀錄</div>';
+    const W=720, H=190, L=58, R=16, T=16, B=34;
+    const vals=data.map(x=>Number(x.total)||0);
+    let min=Math.min(...vals), max=Math.max(...vals);
+    if(min===max){ min-=Math.max(1,Math.abs(min)*0.05); max+=Math.max(1,Math.abs(max)*0.05); }
+    const pad=(max-min)*0.08;
+    min-=pad; max+=pad;
+    const x=i=>L+(data.length===1?(W-L-R)/2:i*(W-L-R)/(data.length-1));
+    const y=v=>T+(max-v)*(H-T-B)/(max-min);
+    const pts=data.map((p,i)=>`${x(i).toFixed(1)},${y(Number(p.total)||0).toFixed(1)}`).join(' ');
+    const area=`${L},${H-B} ${pts} ${W-R},${H-B}`;
+    let grid='';
+    for(let i=0;i<4;i++){
+      const val=max-(max-min)*i/3;
+      const yy=y(val);
+      grid += `<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="#EDE3C8" stroke-width="1"/>`;
+      grid += `<text x="${L-8}" y="${yy+4}" text-anchor="end" font-size="10" fill="#7A6E4E">${compactMoney(val)}</text>`;
+    }
+    const tickIdx=[0, Math.floor((data.length-1)/2), data.length-1].filter((v,i,a)=>a.indexOf(v)===i);
+    let labels='';
+    tickIdx.forEach(i=>{
+      labels += `<text x="${x(i)}" y="${H-8}" text-anchor="middle" font-size="10" fill="#7A6E4E">${esc(data[i].date)}</text>`;
+    });
+    const zeroY = (min<=0 && max>=0) ? y(0) : null;
+    const zeroLine = zeroY!=null ? `<line x1="${L}" y1="${zeroY}" x2="${W-R}" y2="${zeroY}" stroke="#B9A883" stroke-width="1.1"/>` : '';
+    return `<svg class="native-chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="累計損益走勢">
+      ${grid}${zeroLine}
+      <polygon points="${area}" fill="rgba(179,38,30,0.08)"/>
+      <polyline points="${pts}" fill="none" stroke="#B3261E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      ${data.length===1?`<circle cx="${x(0)}" cy="${y(vals[0])}" r="3.5" fill="#B3261E"/>`:''}
+      ${labels}
+    </svg>`;
+  }
+
+  function donutChartSvg(rows){
+    if(!rows.length) return '<div class="empty-note">目前無庫存</div>';
+    const colors=['#2E7FB8','#A9812F','#B3261E','#2B4C7E','#6B4E9C','#C97B3D','#8A5A2B','#C9A24E','#B5657A','#7A3B3B','#3A7D6E','#946B46'];
+    const values=rows.map(r=>Math.max(0,Number(r.mv||r.cost)||0));
+    const total=values.reduce((a,b)=>a+b,0);
+    if(total<=0) return '<div class="empty-note">目前無可計算的持股市值</div>';
+    const radius=54, circ=2*Math.PI*radius;
+    let offset=0, arcs='';
+    rows.forEach((r,i)=>{
+      const frac=values[i]/total;
+      const dash=frac*circ;
+      arcs += `<circle cx="80" cy="80" r="${radius}" fill="none" stroke="${colors[i%colors.length]}" stroke-width="24" stroke-dasharray="${dash} ${circ-dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 80 80)"/>`;
+      offset += dash;
+    });
+    const legend=rows.map((r,i)=>{
+      const pct=values[i]/total;
+      return `<div class="native-legend-item"><span class="native-legend-dot" style="background:${colors[i%colors.length]}"></span><span><strong>${esc(r.symbol)}</strong> ${esc(r.name||'')} <span class="native-legend-pct">${(pct*100).toFixed(1)}%</span></span></div>`;
+    }).join('');
+    return `<div class="native-donut-wrap">
+      <svg class="native-donut-svg" viewBox="0 0 160 160" role="img" aria-label="持股市值配置">
+        <circle cx="80" cy="80" r="${radius}" fill="none" stroke="#EFE4C6" stroke-width="24"/>
+        ${arcs}
+        <text x="80" y="76" text-anchor="middle" font-size="11" fill="#7A6E4E">總市值</text>
+        <text x="80" y="96" text-anchor="middle" font-size="14" font-weight="700" fill="#2B2620">${compactMoney(total)}</text>
+      </svg>
+      <div class="native-legend">${legend}</div>
+    </div>`;
+  }
+
   el.innerHTML = `
   <div class="card" style="margin-top:22px;">
-    <div class="charts-row">
-      <div class="chart-box">
+    <div class="charts-row native-charts-row">
+      <div class="chart-box native-chart-box">
         <h4>累計損益走勢（已實現＋未實現＋配息）</h4>
-        ${curve.length? '<canvas id="equityChart"></canvas>' : '<div class="empty-note">尚無交易或收盤價紀錄</div>'}
+        ${lineChartSvg(curve)}
       </div>
-      <div class="chart-box">
+      <div class="chart-box native-chart-box native-alloc-box">
         <h4>持股市值配置</h4>
-        ${d.rows.length? '<canvas id="allocChart"></canvas>' : '<div class="empty-note">目前無庫存</div>'}
+        ${donutChartSvg(d.rows)}
       </div>
     </div>
   </div>`;
-
-  if(curve.length && typeof Chart==='undefined'){
-    document.getElementById('equityChart').outerHTML = '<div class="empty-note">圖表元件載入失敗（需要網路連線），其餘功能不受影響</div>';
-  }
-  if(d.rows.length && typeof Chart==='undefined'){
-    const allocEl = document.getElementById('allocChart');
-    if(allocEl) allocEl.outerHTML = '<div class="empty-note">圖表元件載入失敗（需要網路連線），其餘功能不受影響</div>';
-  }
-  if(curve.length && typeof Chart!=='undefined'){
-    const ctx = document.getElementById('equityChart');
-    if(equityChartInst) equityChartInst.destroy();
-    equityChartInst = new Chart(ctx, {
-      type:'line',
-      data:{
-        labels: curve.map(c=>c.date),
-        datasets:[{
-          label:'累計損益',
-          data: curve.map(c=>Math.round(c.total)),
-          borderColor:'#B3261E',
-          backgroundColor:'rgba(179,38,30,0.08)',
-          fill:true, tension:.25, pointRadius:0, borderWidth:2
-        }]
-      },
-      options:{
-        responsive:true, maintainAspectRatio:false,
-        plugins:{legend:{display:false}, tooltip:{callbacks:{label:(c)=>'$'+c.parsed.y.toLocaleString('en-US')}}},
-        scales:{
-          x:{ticks:{maxTicksLimit:5, font:{size:10}}, grid:{display:false}},
-          y:{ticks:{font:{size:10}, callback:v=>'$'+Number(v).toLocaleString('en-US')}, grid:{color:'#EDE3C8'}}
-        }
-      }
-    });
-  }
-  if(d.rows.length && typeof Chart!=='undefined'){
-    const ctx2 = document.getElementById('allocChart');
-    if(allocChartInst) allocChartInst.destroy();
-    const colors = ['#2E7FB8','#A9812F','#B3261E','#2B4C7E','#6B4E9C','#C97B3D','#8A5A2B','#C9A24E','#B5657A','#7A3B3B'];
-    allocChartInst = new Chart(ctx2, {
-      type:'doughnut',
-      data:{
-        labels: d.rows.map(r=>r.symbol+' '+r.name),
-        datasets:[{ data: d.rows.map(r=>Math.round(r.mv||r.cost)), backgroundColor: colors, borderColor:'#FFFBEF', borderWidth:2 }]
-      },
-      options:{
-        responsive:true, maintainAspectRatio:false,
-        plugins:{ legend:{position:'bottom', labels:{boxWidth:9, font:{size:9.5}}} }
-      }
-    });
-  }
 }
 
 /* ============================= SECTION TABS ============================= */
