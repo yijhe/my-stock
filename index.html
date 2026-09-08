@@ -393,7 +393,7 @@
 /* ===== v10：投資成本 ===== */
 .capital-summary-grid{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(4,minmax(0,1fr));
   gap:10px;
   margin:4px 0 16px;
 }
@@ -416,7 +416,7 @@
 .capital-flow-table th:nth-child(3),.capital-flow-table td:nth-child(3){width:115px!important;}
 .capital-modal-summary{
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:repeat(4,minmax(0,1fr));
   gap:8px;
   margin:0 0 14px;
 }
@@ -1202,15 +1202,63 @@ function capitalFlowsForAccount(accountId, asOfDate){
   const rows = state.capitalFlowLogs.filter(r=>r.date<=cutoff && (accountId==='all' || r.accountId===accountId));
   return rows.slice().sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
 }
+function initialFundStatusForAccount(accountId, asOfDate){
+  const cutoff = asOfDate || todayStr();
+
+  if(accountId==='all'){
+    let own=0, margin=0, any=false;
+    state.accounts.forEach(a=>{
+      const logs = state.fundLogs
+        .filter(f=>f.accountId===a.id && f.date<=cutoff)
+        .sort((x,y)=> x.date.localeCompare(y.date) || String(x.id).localeCompare(String(y.id)));
+      if(logs.length){
+        const first = logs[0];
+        any = true;
+        own += Number(first.ownAmount)||0;
+        margin += Number(first.marginAmount)||0;
+      }
+    });
+    return any ? {ownAmount:own, marginAmount:margin} : {ownAmount:0, marginAmount:0};
+  }
+
+  const logs = state.fundLogs
+    .filter(f=>f.accountId===accountId && f.date<=cutoff)
+    .sort((x,y)=> x.date.localeCompare(y.date) || String(x.id).localeCompare(String(y.id)));
+
+  if(!logs.length) return {ownAmount:0, marginAmount:0};
+  return {
+    ownAmount:Number(logs[0].ownAmount)||0,
+    marginAmount:Number(logs[0].marginAmount)||0
+  };
+}
+
 function capitalFlowStats(accountId, asOfDate){
-  const rows = capitalFlowsForAccount(accountId, asOfDate || todayStr());
+  const cutoff = asOfDate || todayStr();
+  const rows = capitalFlowsForAccount(accountId, cutoff);
   let deposits=0, withdrawals=0;
+
   rows.forEach(r=>{
     const amount = Math.abs(Number(r.amount)||0);
     if(r.type==='withdraw') withdrawals += amount;
     else deposits += amount;
   });
-  return {deposits, withdrawals, net:deposits-withdrawals, count:rows.length};
+
+  const initial = initialFundStatusForAccount(accountId, cutoff);
+  const initialOwn = Number(initial.ownAmount)||0;
+  const initialMargin = Number(initial.marginAmount)||0;
+  const initialTotal = initialOwn + initialMargin;
+  const totalInvested = initialTotal + deposits - withdrawals;
+
+  return {
+    deposits,
+    withdrawals,
+    initialOwn,
+    initialMargin,
+    initialTotal,
+    totalInvested,
+    net:totalInvested,
+    count:rows.length
+  };
 }
 function totalRepaid(accountId){
   return repaymentLogsForAccount(accountId).reduce((s,r)=>s+(r.amount||0),0);
@@ -1368,7 +1416,7 @@ function renderDashboardSummary(){
         </div>
         <div class="dash-value" style="font-size:15px;">${d.fundStatus?fmtMoney(d.fundStatus.ownAmount):'—'} <span style="color:var(--ink-soft);font-size:12px;">/</span> ${d.fundStatus?fmtMoney(d.fundStatus.marginAmount):'—'}</div>
         <div class="dash-sub">${d.fundStatus? '總損益對自有資金報酬率（估算）'+fmtPct(d.returnOnOwn) : '尚未記錄資金狀況'}</div>
-        <div class="dash-sub">投資成本淨投入 ${fmtMoney(d.capitalStats.net)}（投入 ${fmtMoney(d.capitalStats.deposits)}／提領 ${fmtMoney(d.capitalStats.withdrawals)}）</div>
+        <div class="dash-sub">總投入資金 ${fmtMoney(d.capitalStats.totalInvested)}（初始 ${fmtMoney(d.capitalStats.initialTotal)}＋後續投入 ${fmtMoney(d.capitalStats.deposits)}－提領 ${fmtMoney(d.capitalStats.withdrawals)}）</div>
         <div class="dash-sub">累計已還款 ${fmtMoney(d.totalRepaid)}</div>
       </div>
     </div>
@@ -1635,14 +1683,15 @@ function renderInvestmentCostPanel(){
   </div>`;
 
   const summary = `<div class="capital-summary-grid">
-    <div class="capital-summary-item"><span>累計投入</span><strong>${fmtMoney(stats.deposits)}</strong></div>
+    <div class="capital-summary-item"><span>初始自有＋借貸</span><strong>${fmtMoney(stats.initialTotal)}</strong></div>
+    <div class="capital-summary-item"><span>後續投入</span><strong>${fmtMoney(stats.deposits)}</strong></div>
     <div class="capital-summary-item"><span>累計提領</span><strong>${fmtMoney(stats.withdrawals)}</strong></div>
-    <div class="capital-summary-item"><span>淨投入資金</span><strong class="${plClass(stats.net)}">${fmtMoney(stats.net)}</strong></div>
+    <div class="capital-summary-item"><span>總投入資金</span><strong>${fmtMoney(stats.totalInvested)}</strong></div>
   </div>`;
 
   if(logs.length===0){
     return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
-      <p class="panel-note">記錄實際匯入證券帳戶的資金與從帳戶提領的資金；淨投入＝累計投入－累計提領。</p>
+      <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；總投入資金＝初始自有資金＋初始借貸資金＋後續投入－累計提領。</p>
       ${summary}
       <div class="card empty-state"><div class="glyph">💰</div><p>尚無投入或提領紀錄。</p>
       <button class="btn-stamp" data-action="open-capital-flow">＋ 新增第一筆資金紀錄</button></div>`;
@@ -1665,7 +1714,7 @@ function renderInvestmentCostPanel(){
   }).join('');
 
   return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
-    <p class="panel-note">記錄實際匯入證券帳戶的資金與從帳戶提領的資金；淨投入＝累計投入－累計提領。此統計會同步顯示在「自有／借貸資金」區塊。</p>
+    <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；總投入資金＝初始自有資金＋初始借貸資金＋後續投入－累計提領。此統計會同步顯示在「自有／借貸資金」區塊。</p>
     ${summary}
     <div class="ledger-wrap"><table class="compact-record-table capital-flow-table">
       <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
@@ -2490,7 +2539,7 @@ function openCapitalFlowModal(editId){
     </div>
     <div class="form-row"><label>金額</label><input type="number" step="1" min="0" id="capitalAmount" value="${editing?Math.abs(editing.amount||0):''}" placeholder="例如 100000" required></div>
     <div class="form-row"><label>備註</label><input type="text" id="capitalNote" value="${editing?esc(editing.note||''):''}" placeholder="選填，例如首次投入、追加資金、提領獲利"></div>
-    <div class="form-hint">「投入資金」增加淨投入；「提領資金」減少淨投入。股票買賣本身不需要在此重複記錄。</div>
+    <div class="form-hint">「投入資金」會增加總投入資金；「提領資金」會減少總投入資金。初始自有與借貸資金取自此帳戶最早一筆「資金狀況」紀錄，股票買賣本身不需要在此重複記錄。</div>
     <div class="modal-actions">
       ${editing?`<button type="button" class="btn-danger" id="capitalDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
       <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
@@ -2539,9 +2588,10 @@ function openFundLogModal(preselectAccount){
   function capitalSummaryHtml(accId){
     const s = capitalFlowStats(accId, todayStr());
     return `<div class="capital-modal-summary">
-      <div><span>累計投入</span><strong>${fmtMoney(s.deposits)}</strong></div>
+      <div><span>初始自有＋借貸</span><strong>${fmtMoney(s.initialTotal)}</strong></div>
+      <div><span>後續投入</span><strong>${fmtMoney(s.deposits)}</strong></div>
       <div><span>累計提領</span><strong>${fmtMoney(s.withdrawals)}</strong></div>
-      <div><span>淨投入</span><strong>${fmtMoney(s.net)}</strong></div>
+      <div><span>總投入資金</span><strong>${fmtMoney(s.totalInvested)}</strong></div>
     </div>`;
   }
 
