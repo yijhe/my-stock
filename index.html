@@ -2411,8 +2411,14 @@ function openHoldingModal(){
   <form id="holdingForm">
     ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
     <div class="form-grid2">
-      <div class="form-row"><label>股票代號</label><input type="text" id="holdingSymbol" required placeholder="例如 2330"></div>
-      <div class="form-row"><label>股票名稱</label><input type="text" id="holdingName" placeholder="例如 台積電"></div>
+      <div class="form-row"><label>股票代號</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="text" id="holdingSymbol" required placeholder="例如 2330" style="flex:1;min-width:0;">
+          <button type="button" class="btn-secondary" id="holdingLookupBtn" style="white-space:nowrap;">查詢</button>
+        </div>
+        <div class="form-hint" id="holdingLookupStatus">輸入股票代號後可自動查詢股票名稱。</div>
+      </div>
+      <div class="form-row"><label>股票名稱</label><input type="text" id="holdingName" placeholder="查詢後自動帶入"></div>
     </div>
     <div class="form-grid2">
       <div class="form-row"><label>股數</label><input type="number" id="holdingShares" min="0" step="1" required></div>
@@ -2430,6 +2436,32 @@ function openHoldingModal(){
     </div>
   </form>`;
   openModal('新增庫存', body, (root)=>{
+    const symbolEl = root.querySelector('#holdingSymbol');
+    const nameEl = root.querySelector('#holdingName');
+    const lookupBtn = root.querySelector('#holdingLookupBtn');
+    const lookupStatus = root.querySelector('#holdingLookupStatus');
+
+    async function lookupHoldingStock(){
+      const symbol = symbolEl.value.trim().toUpperCase();
+      if(!symbol){ lookupStatus.textContent='請先輸入股票代號。'; symbolEl.focus(); return; }
+      lookupBtn.disabled=true;
+      lookupStatus.textContent='查詢中…';
+      try{
+        const info = await withOverallTimeout(lookupStockInfo(symbol, todayStr()), 20000);
+        if(!info) throw new Error('查無此股票代號');
+        if(info.name) nameEl.value=info.name;
+        lookupStatus.textContent = info.name ? `已找到：${info.name}` : '已找到股票資料';
+      }catch(err){
+        lookupStatus.textContent = err && err.message ? err.message : '股票資料查詢失敗，請稍後再試。';
+      }finally{
+        lookupBtn.disabled=false;
+      }
+    }
+    lookupBtn.addEventListener('click', lookupHoldingStock);
+    symbolEl.addEventListener('keydown', e=>{
+      if(e.key==='Enter'){ e.preventDefault(); lookupHoldingStock(); }
+    });
+
     root.querySelector('#holdingForm').addEventListener('submit', (e)=>{
       e.preventDefault();
       const accountId = fixedAccount || root.querySelector('.modal-body select').value;
