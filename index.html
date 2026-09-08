@@ -1281,6 +1281,49 @@ function fundStatusFor(accountId, asOfDate){
   return accountId==='all' ? aggregateFundStatus(asOfDate) : latestFundStatus(accountId, asOfDate);
 }
 
+function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousEntry){
+  if(!accountId || !(amount>0)) return;
+
+  // 先找指定日期以前最新一筆資金狀況，作為同步基準。
+  const priorLogs = state.fundLogs
+    .filter(f=>f.accountId===accountId && f.date<=date)
+    .sort((a,b)=> a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
+
+  let baseOwn = priorLogs.length ? (Number(priorLogs[priorLogs.length-1].ownAmount)||0) : 0;
+  let baseMargin = priorLogs.length ? (Number(priorLogs[priorLogs.length-1].marginAmount)||0) : 0;
+
+  // 編輯既有資金流時，先反向還原原紀錄對自有資金的影響，再套用新值。
+  if(previousEntry && previousEntry.accountId===accountId){
+    const prevAmount = Math.abs(Number(previousEntry.amount)||0);
+    if(previousEntry.type==='withdraw') baseOwn += prevAmount;
+    else baseOwn -= prevAmount;
+  }
+
+  if(flowType==='withdraw') baseOwn = Math.max(0, baseOwn - amount);
+  else baseOwn += amount;
+
+  // 同日期已有資金狀況時直接更新，否則新增一筆快照。
+  const sameDate = state.fundLogs
+    .filter(f=>f.accountId===accountId && f.date===date)
+    .sort((a,b)=> String(a.id).localeCompare(String(b.id)));
+
+  if(sameDate.length){
+    const target = sameDate[sameDate.length-1];
+    target.ownAmount = baseOwn;
+    target.marginAmount = baseMargin;
+    target.note = target.note || '由投資成本自動同步';
+  }else{
+    state.fundLogs.push({
+      id:uid(),
+      accountId,
+      date,
+      ownAmount:baseOwn,
+      marginAmount:baseMargin,
+      note:'由投資成本自動同步'
+    });
+  }
+}
+
 function computeDashboard(accountId){
   const {holdings, cumRealizedPL} = computeHoldingsAsOf(accountId, todayStr());
   const {rows, totalMV, totalCost, totalUnreal} = enrichHoldings(holdings, todayStr());
@@ -1416,7 +1459,10 @@ function renderDashboardSummary(){
         </div>
         <div class="dash-value" style="font-size:15px;">${d.fundStatus?fmtMoney(d.fundStatus.ownAmount):'—'} <span style="color:var(--ink-soft);font-size:12px;">/</span> ${d.fundStatus?fmtMoney(d.fundStatus.marginAmount):'—'}</div>
         <div class="dash-sub">${d.fundStatus? '總損益對自有資金報酬率（估算）'+fmtPct(d.returnOnOwn) : '尚未記錄資金狀況'}</div>
-        <div class="dash-sub">總投入資金 ${fmtMoney(d.capitalStats.totalInvested)}（初始 ${fmtMoney(d.capitalStats.initialTotal)}＋後續投入 ${fmtMoney(d.capitalStats.deposits)}－提領 ${fmtMoney(d.capitalStats.withdrawals)}）</div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dotted var(--paper-line);">
+          <div class="dash-label" style="font-size:12.5px;font-weight:700;color:var(--cover);">總投入資金</div>
+          <div class="dash-value" style="font-size:18px;color:var(--cover);margin-top:2px;">${fmtMoney(d.capitalStats.totalInvested)}</div>
+        </div>
         <div class="dash-sub">累計已還款 ${fmtMoney(d.totalRepaid)}</div>
       </div>
     </div>
@@ -2539,7 +2585,7 @@ function openCapitalFlowModal(editId){
     </div>
     <div class="form-row"><label>金額</label><input type="number" step="1" min="0" id="capitalAmount" value="${editing?Math.abs(editing.amount||0):''}" placeholder="例如 100000" required></div>
     <div class="form-row"><label>備註</label><input type="text" id="capitalNote" value="${editing?esc(editing.note||''):''}" placeholder="選填，例如首次投入、追加資金、提領獲利"></div>
-    <div class="form-hint">「投入資金」會增加總投入資金；「提領資金」會減少總投入資金。初始自有與借貸資金取自此帳戶最早一筆「資金狀況」紀錄，股票買賣本身不需要在此重複記錄。</div>
+    <div class="form-hint">新增「投入資金」時會同步增加此帳戶的自有資金；新增「提領資金」時會同步扣減自有資金。股票買賣本身不需要在此重複記錄。</div>
     <div class="modal-actions">
       ${editing?`<button type="button" class="btn-danger" id="capitalDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
       <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
@@ -2558,9 +2604,27 @@ function openCapitalFlowModal(editId){
       if(!accountId){ stampToast('請先新增帳戶', true); return; }
       if(amount<=0){ stampToast('請輸入金額', true); return; }
       if(editing){
+        const previousEntry = {
+          accountId:editing.accountId,
+          date:editing.date,
+          type:editing.type,
+          amount:editing.amount
+        };
+
+        // 若編輯時換了帳戶，先把舊帳戶的原資金流影響反向還原。
+        if(previousEntry.accountId && previousEntry.accountId!==accountId){
+          const prevAmount = Math.abs(Number(previousEntry.amount)||0);
+          const reverseType = previousEntry.type==='withdraw' ? 'deposit' : 'withdraw';
+          applyCapitalFlowToOwnFunds(previousEntry.accountId, previousEntry.date, reverseType, prevAmount);
+          applyCapitalFlowToOwnFunds(accountId, date, flowType, amount);
+        }else{
+          applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousEntry);
+        }
+
         Object.assign(editing, {accountId, date, type:flowType, amount, note});
       }else{
         state.capitalFlowLogs.push({id:uid(), accountId, date, type:flowType, amount, note});
+        applyCapitalFlowToOwnFunds(accountId, date, flowType, amount);
       }
       saveState();
       closeModal();
