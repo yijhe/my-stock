@@ -391,6 +391,7 @@
 
 
 /* ===== v10：投資成本 ===== */
+/* v13：初始資金固定取最早手動 fundLogs；自動同步紀錄不作為初始值 */
 .capital-summary-grid{
   display:grid;
   grid-template-columns:repeat(4,minmax(0,1fr));
@@ -1202,17 +1203,25 @@ function capitalFlowsForAccount(accountId, asOfDate){
   const rows = state.capitalFlowLogs.filter(r=>r.date<=cutoff && (accountId==='all' || r.accountId===accountId));
   return rows.slice().sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
 }
+function isAutoCapitalFundLog(f){
+  return !!(f && (f.source==='capital-flow' || f.note==='由投資成本自動同步'));
+}
+
 function initialFundStatusForAccount(accountId, asOfDate){
   const cutoff = asOfDate || todayStr();
+
+  function firstManualFundLog(accId){
+    const logs = state.fundLogs
+      .filter(f=>f.accountId===accId && f.date<=cutoff && !isAutoCapitalFundLog(f))
+      .sort((x,y)=> x.date.localeCompare(y.date) || String(x.id).localeCompare(String(y.id)));
+    return logs.length ? logs[0] : null;
+  }
 
   if(accountId==='all'){
     let own=0, margin=0, any=false;
     state.accounts.forEach(a=>{
-      const logs = state.fundLogs
-        .filter(f=>f.accountId===a.id && f.date<=cutoff)
-        .sort((x,y)=> x.date.localeCompare(y.date) || String(x.id).localeCompare(String(y.id)));
-      if(logs.length){
-        const first = logs[0];
+      const first = firstManualFundLog(a.id);
+      if(first){
         any = true;
         own += Number(first.ownAmount)||0;
         margin += Number(first.marginAmount)||0;
@@ -1221,14 +1230,12 @@ function initialFundStatusForAccount(accountId, asOfDate){
     return any ? {ownAmount:own, marginAmount:margin} : {ownAmount:0, marginAmount:0};
   }
 
-  const logs = state.fundLogs
-    .filter(f=>f.accountId===accountId && f.date<=cutoff)
-    .sort((x,y)=> x.date.localeCompare(y.date) || String(x.id).localeCompare(String(y.id)));
+  const first = firstManualFundLog(accountId);
+  if(!first) return {ownAmount:0, marginAmount:0};
 
-  if(!logs.length) return {ownAmount:0, marginAmount:0};
   return {
-    ownAmount:Number(logs[0].ownAmount)||0,
-    marginAmount:Number(logs[0].marginAmount)||0
+    ownAmount:Number(first.ownAmount)||0,
+    marginAmount:Number(first.marginAmount)||0
   };
 }
 
@@ -1284,7 +1291,7 @@ function fundStatusFor(accountId, asOfDate){
 function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousEntry){
   if(!accountId || !(amount>0)) return;
 
-  // 先找指定日期以前最新一筆資金狀況，作為同步基準。
+  // 找指定日期以前最新一筆資金狀況作為基準。
   const priorLogs = state.fundLogs
     .filter(f=>f.accountId===accountId && f.date<=date)
     .sort((a,b)=> a.date.localeCompare(b.date) || String(a.id).localeCompare(String(b.id)));
@@ -1292,7 +1299,7 @@ function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousE
   let baseOwn = priorLogs.length ? (Number(priorLogs[priorLogs.length-1].ownAmount)||0) : 0;
   let baseMargin = priorLogs.length ? (Number(priorLogs[priorLogs.length-1].marginAmount)||0) : 0;
 
-  // 編輯既有資金流時，先反向還原原紀錄對自有資金的影響，再套用新值。
+  // 編輯既有資金流時，先反向還原舊資金流影響，再套用新值。
   if(previousEntry && previousEntry.accountId===accountId){
     const prevAmount = Math.abs(Number(previousEntry.amount)||0);
     if(previousEntry.type==='withdraw') baseOwn += prevAmount;
@@ -1302,16 +1309,18 @@ function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousE
   if(flowType==='withdraw') baseOwn = Math.max(0, baseOwn - amount);
   else baseOwn += amount;
 
-  // 同日期已有資金狀況時直接更新，否則新增一筆快照。
-  const sameDate = state.fundLogs
-    .filter(f=>f.accountId===accountId && f.date===date)
+  // 只更新同一天「由投資成本自動同步」的快照。
+  // 手動輸入的資金狀況永遠保留，避免初始資金被覆寫。
+  const sameDateAuto = state.fundLogs
+    .filter(f=>f.accountId===accountId && f.date===date && isAutoCapitalFundLog(f))
     .sort((a,b)=> String(a.id).localeCompare(String(b.id)));
 
-  if(sameDate.length){
-    const target = sameDate[sameDate.length-1];
+  if(sameDateAuto.length){
+    const target = sameDateAuto[sameDateAuto.length-1];
     target.ownAmount = baseOwn;
     target.marginAmount = baseMargin;
-    target.note = target.note || '由投資成本自動同步';
+    target.note = '由投資成本自動同步';
+    target.source = 'capital-flow';
   }else{
     state.fundLogs.push({
       id:uid(),
@@ -1319,7 +1328,8 @@ function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousE
       date,
       ownAmount:baseOwn,
       marginAmount:baseMargin,
-      note:'由投資成本自動同步'
+      note:'由投資成本自動同步',
+      source:'capital-flow'
     });
   }
 }
@@ -1737,7 +1747,7 @@ function renderInvestmentCostPanel(){
 
   if(logs.length===0){
     return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
-      <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；總投入資金＝初始自有資金＋初始借貸資金＋後續投入－累計提領。</p>
+      <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；初始自有與借貸資金會固定取自每個帳戶最早一筆手動「資金狀況」紀錄。</p>
       ${summary}
       <div class="card empty-state"><div class="glyph">💰</div><p>尚無投入或提領紀錄。</p>
       <button class="btn-stamp" data-action="open-capital-flow">＋ 新增第一筆資金紀錄</button></div>`;
@@ -1760,7 +1770,7 @@ function renderInvestmentCostPanel(){
   }).join('');
 
   return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
-    <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；總投入資金＝初始自有資金＋初始借貸資金＋後續投入－累計提領。此統計會同步顯示在「自有／借貸資金」區塊。</p>
+    <p class="panel-note">記錄後續匯入證券帳戶的資金與從帳戶提領的資金；初始自有與借貸資金會固定取自每個帳戶最早一筆手動「資金狀況」紀錄。此統計會同步顯示在「自有／借貸資金」區塊。</p>
     ${summary}
     <div class="ledger-wrap"><table class="compact-record-table capital-flow-table">
       <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
@@ -2730,7 +2740,7 @@ function openFundLogModal(preselectAccount){
       const ownAmount = parseFloat(root.querySelector('#fundOwn').value)||0;
       const marginAmount = parseFloat(root.querySelector('#fundMargin').value)||0;
       const note = root.querySelector('#fundNote').value.trim();
-      state.fundLogs.push({id:uid(), accountId, date, ownAmount, marginAmount, note});
+      state.fundLogs.push({id:uid(), accountId, date, ownAmount, marginAmount, note, source:'manual'});
       saveState();
       closeModal();
       render();
