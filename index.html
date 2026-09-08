@@ -437,6 +437,14 @@
   .capital-flow-table th:nth-child(3),.capital-flow-table td:nth-child(3){width:102px!important;}
 }
 
+
+/* v15：庫存頁直接編輯股數與均價 */
+.holding-shares-input,.holding-avg-input{font-family:'IBM Plex Mono',monospace;}
+@media(max-width:700px){
+  .holding-shares-input{width:78px!important;}
+  .holding-avg-input{width:86px!important;}
+}
+
 </style>
 </head>
 <body>
@@ -472,7 +480,6 @@
 
     <nav class="tabs-section" id="sectionTabs">
       <button data-tab="daily">每日盈虧</button>
-      <button data-tab="transactions">交易紀錄</button>
       <button data-tab="dividends">配息紀錄</button>
       <button data-tab="holdings">庫存股票</button>
       <button data-tab="investment-cost">投資成本</button>
@@ -506,6 +513,7 @@ function defaultState(){
     dividends: [],       // {id, accountId, date, symbol, name, perShare, shares, total, note}
     priceLogs: [],        // {id, date, symbol, price}
     holdingsMeta: [],     // {id, accountId, symbol, name, category, freq, expectedDate, note}
+    manualHoldings: [],   // {id, accountId, symbol, name, category, shares, avgCost} - directly editable holdings
     fundLogs: [],          // {id, accountId, date, ownAmount, marginAmount, note} - manually-entered snapshot of capital invested vs borrowed
     capitalFlowLogs: [],   // {id, accountId, date, type:'deposit'|'withdraw', amount, note} - investment capital in/out
     repaymentLogs: [],     // {id, accountId, date, amount, note} - manually-entered per-period loan repayment record
@@ -989,6 +997,22 @@ function ensureMeta(accountId, symbol, name, category){
   return m;
 }
 
+function manualHoldingFor(accountId, symbol){
+  return state.manualHoldings.find(h=>h.accountId===accountId && h.symbol===symbol);
+}
+function upsertManualHolding(accountId, symbol, name, category, shares, avgCost){
+  let h = manualHoldingFor(accountId, symbol);
+  if(!h){
+    h = {id:uid(), accountId, symbol, name:name||symbol, category:category||'stock', shares:0, avgCost:0};
+    state.manualHoldings.push(h);
+  }
+  h.name = name || h.name || symbol;
+  h.category = category || h.category || 'stock';
+  h.shares = Math.max(0, Number(shares)||0);
+  h.avgCost = Math.max(0, Number(avgCost)||0);
+  return h;
+}
+
 /* ============================= CORE CALC ============================= */
 // Replays transactions up to (and including) asOfDate using weighted-average cost method.
 function computeHoldingsAsOf(accountId, asOfDate){
@@ -996,7 +1020,7 @@ function computeHoldingsAsOf(accountId, asOfDate){
     .filter(t=>t.date<=asOfDate)
     .sort((a,b)=> a.date.localeCompare(b.date) || (a.seq||0)-(b.seq||0));
   const map = {};
-  let cumRealized = 0;
+
   for(const t of txs){
     const key = t.accountId + '|' + t.symbol;
     if(!map[key]) map[key] = {symbol:t.symbol, name:t.name, category:t.category, accountId:t.accountId, shares:0, cost:0};
@@ -1010,19 +1034,34 @@ function computeHoldingsAsOf(accountId, asOfDate){
       const avg = h.shares>0 ? h.cost/h.shares : 0;
       const sellShares = Math.min(t.shares, h.shares);
       const soldCost = avg*sellShares;
-      const proceeds = sellShares*t.price - (t.fee||0) - (t.tax||0);
-      const realized = proceeds - soldCost;
-      cumRealized += realized;
       h.cost = Math.max(0, h.cost - soldCost);
       h.shares = Math.max(0, h.shares - sellShares);
       if(h.shares < 0.0000001){ h.shares = 0; h.cost = 0; }
     }
   }
+
+  // 手動庫存資料優先，讓庫存頁可直接修改股數與均價。
+  state.manualHoldings
+    .filter(h=>accountId==='all' || h.accountId===accountId)
+    .forEach(mh=>{
+      const key = mh.accountId + '|' + mh.symbol;
+      map[key] = {
+        symbol:mh.symbol,
+        name:mh.name,
+        category:mh.category,
+        accountId:mh.accountId,
+        shares:Number(mh.shares)||0,
+        avgCost:Number(mh.avgCost)||0,
+        cost:(Number(mh.shares)||0)*(Number(mh.avgCost)||0)
+      };
+    });
+
   const holdings = Object.values(map).filter(h=>h.shares>0.0000001).map(h=>{
-    h.avgCost = h.shares>0 ? h.cost/h.shares : 0;
+    h.avgCost = h.avgCost!=null ? h.avgCost : (h.shares>0 ? h.cost/h.shares : 0);
+    h.cost = h.shares*h.avgCost;
     return h;
   });
-  return {holdings, cumRealizedPL: cumRealized};
+  return {holdings, cumRealizedPL: manualDailyPLTotal(accountId, asOfDate)};
 }
 function computeHoldings(accountId){ return computeHoldingsAsOf(accountId, todayStr()); }
 
@@ -1335,12 +1374,13 @@ function applyCapitalFlowToOwnFunds(accountId, date, flowType, amount, previousE
 }
 
 function computeDashboard(accountId){
-  const {holdings, cumRealizedPL} = computeHoldingsAsOf(accountId, todayStr());
+  const {holdings} = computeHoldingsAsOf(accountId, todayStr());
   const {rows, totalMV, totalCost, totalUnreal} = enrichHoldings(holdings, todayStr());
   const divs = divForAccount(accountId);
   const totalDiv = divs.reduce((s,d)=>s+(d.total||0),0);
   const fundStatus = fundStatusFor(accountId, todayStr());
   const capitalStats = capitalFlowStats(accountId, todayStr());
+  const cumRealizedPL = manualDailyPLTotal(accountId, todayStr());
   const totalPL = cumRealizedPL + totalUnreal + totalDiv;
   const returnOnOwn = (fundStatus && fundStatus.ownAmount>0) ? totalPL/fundStatus.ownAmount : null;
   return {rows, totalMV, totalCost, totalUnreal, cumRealizedPL, totalDiv, fundStatus, capitalStats, totalPL, returnOnOwn, totalRepaid: totalRepaid(accountId)};
@@ -1454,9 +1494,9 @@ function renderDashboardSummary(){
         <div class="dash-sub ${plClass(d.totalUnreal)}">${d.totalCost>0?fmtPct(d.totalUnreal/d.totalCost):'—'}</div>
       </div>
       <div class="dash-item">
-        <div class="dash-label">已實現損益（累計）</div>
+        <div class="dash-label">已實現損益（每日盈虧合計）</div>
         <div class="dash-value ${plClass(d.cumRealizedPL)}">${fmtMoney(d.cumRealizedPL)}</div>
-        <div class="dash-sub">含手續費／證交稅</div>
+        <div class="dash-sub">依「每日盈虧」手動紀錄加總</div>
       </div>
       <div class="dash-item">
         <div class="dash-label">累計配息</div>
@@ -1484,7 +1524,7 @@ function renderDashboardCharts(){
   if(state.accounts.length===0){ el.innerHTML=''; return; }
   const accId = state.activeAccountId;
   const d = computeDashboard(accId);
-  const curve = computeEquityCurve(accId);
+  const curve = computeManualDailyCurve(accId);
 
   function compactMoney(v){
     const n = Number(v)||0;
@@ -1495,7 +1535,7 @@ function renderDashboardCharts(){
   }
 
   function lineChartSvg(data){
-    if(!data.length) return '<div class="empty-note">尚無交易或收盤價紀錄</div>';
+    if(!data.length) return '<div class="empty-note">尚無每日盈虧紀錄</div>';
     const W=720, H=190, L=58, R=16, T=16, B=34;
     const vals=data.map(x=>Number(x.total)||0);
     let min=Math.min(...vals), max=Math.max(...vals);
@@ -1520,7 +1560,7 @@ function renderDashboardCharts(){
     });
     const zeroY = (min<=0 && max>=0) ? y(0) : null;
     const zeroLine = zeroY!=null ? `<line x1="${L}" y1="${zeroY}" x2="${W-R}" y2="${zeroY}" stroke="#B9A883" stroke-width="1.1"/>` : '';
-    return `<svg class="native-chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="累計損益走勢">
+    return `<svg class="native-chart-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="每日盈虧累計走勢">
       ${grid}${zeroLine}
       <polygon points="${area}" fill="rgba(179,38,30,0.08)"/>
       <polyline points="${pts}" fill="none" stroke="#B3261E" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1562,7 +1602,7 @@ function renderDashboardCharts(){
   <div class="card" style="margin-top:22px;">
     <div class="charts-row native-charts-row">
       <div class="chart-box native-chart-box">
-        <h4>累計損益走勢（已實現＋未實現＋配息）</h4>
+        <h4>累計損益走勢（依每日盈虧）</h4>
         ${lineChartSvg(curve)}
       </div>
       <div class="chart-box native-chart-box native-alloc-box">
@@ -1591,10 +1631,10 @@ function renderHoldingsPanel(){
 
   if(rows.length===0){
     return `<div class="panel-head"><h3>庫存股票</h3>
-      <div class="panel-tools"><button class="btn-stamp" data-action="open-buy">＋ 新增買進</button></div>
+      <div class="panel-tools"><button class="btn-stamp" data-action="open-holding">＋ 新增庫存</button></div>
     </div>
-    <div class="card empty-state"><div class="glyph">📈</div><p>目前沒有庫存，新增第一筆買進交易吧。</p>
-    <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button></div>`;
+    <div class="card empty-state"><div class="glyph">📈</div><p>目前沒有庫存，新增第一筆庫存資料吧。</p>
+    <button class="btn-stamp" data-action="open-holding">＋ 新增庫存</button></div>`;
   }
 
   let rowsHtml = rows.map(r=>{
@@ -1606,8 +1646,8 @@ function renderHoldingsPanel(){
         <div><span class="badge ${r.category==='etf'?'badge-etf':'badge-stock'}">${r.category==='etf'?'ETF':'個股'}</span>
         ${activeIsAll()&&acc?`<span class="acc-chip"><span class="dot" style="background:${acc.color}"></span>${esc(acc.name)}</span>`:''}</div>
       </td>
-      <td class="num">${fmtShares(r.shares)}</td>
-      <td class="num">${fmtPrice(r.avgCost)}</td>
+      <td class="num"><input class="input-txt holding-shares-input" type="number" min="0" step="1" value="${r.shares}" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" style="width:92px;text-align:right;"></td>
+      <td class="num"><input class="input-txt holding-avg-input" type="number" min="0" step="0.01" value="${Number(r.avgCost||0).toFixed(2)}" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" style="width:100px;text-align:right;"></td>
       <td class="num">${r.price!=null?fmtPrice(r.price):'<span style="color:var(--ink-soft)">未設定</span>'}</td>
       <td class="num">${fmtMoney(r.mv||r.cost)}</td>
       <td class="num ${plClass(r.unreal)}">${r.unreal!=null?fmtMoney(r.unreal):'—'}<br><span style="font-size:10.5px;">${fmtPct(r.unrealPct)}</span></td>
@@ -1617,9 +1657,9 @@ function renderHoldingsPanel(){
         ${meta.expectedDate?'<br>下次 '+esc(meta.expectedDate):''}
       </td>
       <td>
+        <button class="btn-icon" data-action="save-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="儲存股數與均價">💾</button>
         <button class="btn-icon" data-action="update-price" data-symbol="${esc(r.symbol)}" title="更新價格">💲</button>
         <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯資訊">✎</button>
-        <button class="btn-icon" data-action="open-sell" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="賣出">賣</button>
       </td>
     </tr>`;
   }).join('');
@@ -1628,7 +1668,7 @@ function renderHoldingsPanel(){
     <h3>庫存股票</h3>
     <div class="panel-tools">
       <button class="btn-secondary" data-action="bulk-update-holdings-prices" title="更新目前庫存中所有股票的最近收盤價">↻ 一鍵更新股價</button>
-      <button class="btn-stamp" data-action="open-buy">＋ 新增買進</button>
+      <button class="btn-stamp" data-action="open-holding">＋ 新增庫存</button>
     </div>
   </div>
   <div class="ledger-wrap"><table>
@@ -1820,6 +1860,28 @@ function dailyLogsForAccount(accountId){
   if(accountId==='all') return state.dailyPLLogs.slice();
   return state.dailyPLLogs.filter(l=>l.accountId===accountId);
 }
+
+function manualDailyPLTotal(accountId, asOfDate){
+  const cutoff = asOfDate || todayStr();
+  return dailyLogsForAccount(accountId)
+    .filter(l=>l.date<=cutoff)
+    .reduce((s,l)=>s + (l.type==='profit' ? (Number(l.amount)||0) : -(Number(l.amount)||0)), 0);
+}
+
+function computeManualDailyCurve(accountId){
+  const grouped = {};
+  dailyLogsForAccount(accountId).forEach(l=>{
+    if(!grouped[l.date]) grouped[l.date] = 0;
+    const amount = Math.abs(Number(l.amount)||0);
+    grouped[l.date] += l.type==='profit' ? amount : -amount;
+  });
+  let cumulative = 0;
+  return Object.keys(grouped).sort().map(date=>{
+    const dailyPL = grouped[date];
+    cumulative += dailyPL;
+    return {date, dailyPL, total:cumulative};
+  });
+}
 function renderManualDailySection(accId){
   const logs = dailyLogsForAccount(accId).slice().sort((a,b)=> b.date.localeCompare(a.date));
   const total = logs.reduce((s,l)=> s + (l.type==='profit'? l.amount : -l.amount), 0);
@@ -1858,37 +1920,7 @@ function renderManualDailySection(accId){
 function renderDailyPanel(){
   if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
   const accId = state.activeAccountId;
-  const manualHtml = renderManualDailySection(accId);
-
-  const curve = computeEquityCurve(accId).slice().reverse();
-  let autoHtml;
-  if(curve.length===0){
-    autoHtml = `<div class="card empty-state" style="margin-top:26px;"><div class="glyph">📅</div><p>尚無交易或收盤價紀錄，無法試算每日損益。</p></div>`;
-  } else {
-    const rowsHtml = curve.map(c=>`<tr>
-      <td class="mono">${c.date}</td>
-      <td class="num ${plClass(c.dailyPL)}" style="font-weight:700;">${fmtMoney(c.dailyPL)}</td>
-      <td class="num ${plClass(c.total)}">${fmtMoney(c.total)}</td>
-      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.unreal)}</td>
-      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.cumRealizedPL)}</td>
-      <td class="num" style="color:var(--ink-soft);">${fmtMoney(c.divTotal)}</td>
-    </tr>`).join('');
-    autoHtml = `
-    <div class="ledger-wrap"><table class="compact-record-table">
-      <thead><tr><th>日期</th><th class="num">當日損益</th><th class="num">累計總損益</th><th class="num">未實現（快照）</th><th class="num">已實現（累計）</th><th class="num">配息（累計）</th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-    </table></div>`;
-  }
-
-  return `${manualHtml}
-  <div style="margin-top:30px; padding-top:6px; border-top:2px dotted var(--paper-line);">
-    <div class="panel-head" style="margin-bottom:6px;">
-      <h3 style="font-size:14px;color:var(--ink-soft);">系統試算走勢（依交易與收盤價自動計算）</h3>
-      <div class="panel-tools"><button class="btn-secondary" data-action="open-price-log">＋ 記錄收盤價</button></div>
-    </div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;">「當日損益」＝當日與前一筆紀錄相比的累計損益變化（已實現＋未實現＋配息），需先記錄收盤價才能反映未實現部位的變動，與上方手動紀錄互不影響。</p>
-    ${autoHtml}
-  </div>`;
+  return renderManualDailySection(accId);
 }
 
 /* ============================= PANEL ROOT ============================= */
@@ -1896,7 +1928,6 @@ function renderDailyPanel(){
 function renderPanel(){
   const root = document.getElementById('panelRoot');
   if(currentTab==='holdings') root.innerHTML = renderHoldingsPanel();
-  else if(currentTab==='transactions') root.innerHTML = renderTransactionsPanel();
   else if(currentTab==='dividends') root.innerHTML = renderDividendsPanel();
   else if(currentTab==='investment-cost') root.innerHTML = renderInvestmentCostPanel();
   else if(currentTab==='repayment') root.innerHTML = renderRepaymentPanel();
@@ -1983,6 +2014,7 @@ function openAccountModal(editId){
           state.transactions = state.transactions.filter(t=>t.accountId!==editing.id);
           state.dividends = state.dividends.filter(d=>d.accountId!==editing.id);
           state.holdingsMeta = state.holdingsMeta.filter(m=>m.accountId!==editing.id);
+          state.manualHoldings = state.manualHoldings.filter(h=>h.accountId!==editing.id);
           state.fundLogs = state.fundLogs.filter(f=>f.accountId!==editing.id);
           state.repaymentLogs = state.repaymentLogs.filter(r=>r.accountId!==editing.id);
           state.dailyPLLogs = state.dailyPLLogs.filter(l=>l.accountId!==editing.id);
@@ -2367,6 +2399,53 @@ function openDailyLogModal(opts){
         });
       });
     }
+  });
+}
+
+
+/* ============================= MODALS: MANUAL HOLDING ============================= */
+function openHoldingModal(){
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  const selectedAccount = fixedAccount || (state.accounts[0] && state.accounts[0].id);
+  const body = `
+  <form id="holdingForm">
+    ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-grid2">
+      <div class="form-row"><label>股票代號</label><input type="text" id="holdingSymbol" required placeholder="例如 2330"></div>
+      <div class="form-row"><label>股票名稱</label><input type="text" id="holdingName" placeholder="例如 台積電"></div>
+    </div>
+    <div class="form-grid2">
+      <div class="form-row"><label>股數</label><input type="number" id="holdingShares" min="0" step="1" required></div>
+      <div class="form-row"><label>平均成本</label><input type="number" id="holdingAvgCost" min="0" step="0.01" required></div>
+    </div>
+    <div class="form-row"><label>類別</label>
+      <select id="holdingCategory">
+        <option value="stock">個股</option>
+        <option value="etf">ETF</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">新增庫存</button>
+    </div>
+  </form>`;
+  openModal('新增庫存', body, (root)=>{
+    root.querySelector('#holdingForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || root.querySelector('.modal-body select').value;
+      const symbol = root.querySelector('#holdingSymbol').value.trim().toUpperCase();
+      const name = root.querySelector('#holdingName').value.trim();
+      const shares = parseFloat(root.querySelector('#holdingShares').value)||0;
+      const avgCost = parseFloat(root.querySelector('#holdingAvgCost').value)||0;
+      const category = root.querySelector('#holdingCategory').value;
+      if(!accountId || !symbol || shares<=0 || avgCost<0){ stampToast('請完整輸入庫存資料', true); return; }
+      upsertManualHolding(accountId, symbol, name||symbol, category, shares, avgCost);
+      ensureMeta(accountId, symbol, name||symbol, category);
+      saveState();
+      closeModal();
+      currentTab='holdings';
+      render();
+    });
   });
 }
 
@@ -2844,16 +2923,22 @@ document.addEventListener('click', (e)=>{
       break;
     case 'add-account': openAccountModal(); break;
     case 'edit-account': openAccountModal(btn.dataset.id); break;
-    case 'open-buy': openTransactionModal({action:'buy'}); break;
-    case 'open-sell': openTransactionModal({action:'sell', accountId:btn.dataset.accid, symbol:btn.dataset.symbol}); break;
-    case 'open-sell-generic': openTransactionModal({action:'sell'}); break;
-    case 'edit-transaction': openTransactionModal({editId:btn.dataset.id}); break;
-    case 'delete-transaction':
-      confirmAction('確定要刪除這筆交易紀錄嗎？', ()=>{
-        state.transactions = state.transactions.filter(t=>t.id!==btn.dataset.id);
-        saveState(); render();
-      });
+    case 'open-holding': openHoldingModal(); break;
+    case 'save-holding': {
+      const accid = btn.dataset.accid;
+      const symbol = btn.dataset.symbol;
+      const shareInput = document.querySelector(`.holding-shares-input[data-accid="${accid}"][data-symbol="${CSS.escape(symbol)}"]`);
+      const avgInput = document.querySelector(`.holding-avg-input[data-accid="${accid}"][data-symbol="${CSS.escape(symbol)}"]`);
+      const {holdings} = computeHoldingsAsOf(accid, todayStr());
+      const current = holdings.find(h=>h.symbol===symbol);
+      if(!current || !shareInput || !avgInput){ stampToast('找不到庫存資料', true); break; }
+      const shares = Math.max(0, parseFloat(shareInput.value)||0);
+      const avgCost = Math.max(0, parseFloat(avgInput.value)||0);
+      upsertManualHolding(accid, symbol, current.name||symbol, current.category||'stock', shares, avgCost);
+      saveState();
+      render();
       break;
+    }
     case 'open-dividend': openDividendModal(); break;
     case 'edit-dividend': openDividendModal(btn.dataset.id); break;
     case 'delete-dividend':
