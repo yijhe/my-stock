@@ -438,13 +438,9 @@
 }
 
 
-/* v15：庫存頁直接編輯股數與均價 */
-.holding-shares-input,.holding-avg-input{font-family:'IBM Plex Mono',monospace;}
-@media(max-width:700px){
-  .holding-shares-input{width:78px!important;}
-  .holding-avg-input{width:86px!important;}
-}
 
+
+/* v17：庫存股數/均價改由修改視窗編輯，新增庫存查詢後自動分類 */
 </style>
 </head>
 <body>
@@ -995,6 +991,26 @@ function ensureMeta(accountId, symbol, name, category){
     m.name = name;
   }
   return m;
+}
+
+
+function inferStockCategory(info, symbol, name){
+  const n = String(name || (info && info.name) || '').toUpperCase();
+  const raw = JSON.stringify(info || {}).toUpperCase();
+
+  // 台股 ETF 名稱與市場資料通常會包含 ETF / 指數 / 債券 / 槓桿反向等特徵。
+  if(
+    raw.includes('ETF') ||
+    n.includes('ETF') ||
+    /^(00|006|007|008|009)/.test(String(symbol||'')) ||
+    n.includes('指數') ||
+    n.includes('高股息') ||
+    n.includes('債') ||
+    n.includes('正2') ||
+    n.includes('反1')
+  ) return 'etf';
+
+  return 'stock';
 }
 
 function manualHoldingFor(accountId, symbol){
@@ -1646,8 +1662,8 @@ function renderHoldingsPanel(){
         <div><span class="badge ${r.category==='etf'?'badge-etf':'badge-stock'}">${r.category==='etf'?'ETF':'個股'}</span>
         ${activeIsAll()&&acc?`<span class="acc-chip"><span class="dot" style="background:${acc.color}"></span>${esc(acc.name)}</span>`:''}</div>
       </td>
-      <td class="num"><input class="input-txt holding-shares-input" type="number" min="0" step="1" value="${r.shares}" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" style="width:92px;text-align:right;"></td>
-      <td class="num"><input class="input-txt holding-avg-input" type="number" min="0" step="0.01" value="${Number(r.avgCost||0).toFixed(2)}" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" style="width:100px;text-align:right;"></td>
+      <td class="num">${fmtShares(r.shares)}</td>
+      <td class="num">${fmtPrice(r.avgCost)}</td>
       <td class="num">${r.price!=null?fmtPrice(r.price):'<span style="color:var(--ink-soft)">未設定</span>'}</td>
       <td class="num">${fmtMoney(r.mv||r.cost)}</td>
       <td class="num ${plClass(r.unreal)}">${r.unreal!=null?fmtMoney(r.unreal):'—'}<br><span style="font-size:10.5px;">${fmtPct(r.unrealPct)}</span></td>
@@ -1657,9 +1673,9 @@ function renderHoldingsPanel(){
         ${meta.expectedDate?'<br>下次 '+esc(meta.expectedDate):''}
       </td>
       <td>
-        <button class="btn-icon" data-action="save-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="儲存股數與均價">💾</button>
+        <button class="btn-icon" data-action="edit-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="修改股數與均價">✎</button>
         <button class="btn-icon" data-action="update-price" data-symbol="${esc(r.symbol)}" title="更新價格">💲</button>
-        <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯資訊">✎</button>
+        <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯股票資訊">⚙</button>
       </td>
     </tr>`;
   }).join('');
@@ -2429,6 +2445,7 @@ function openHoldingModal(){
         <option value="stock">個股</option>
         <option value="etf">ETF</option>
       </select>
+      <div class="form-hint">查詢股票代號後會自動分類，仍可手動調整。</div>
     </div>
     <div class="modal-actions">
       <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
@@ -2450,7 +2467,11 @@ function openHoldingModal(){
         const info = await withOverallTimeout(lookupStockInfo(symbol, todayStr()), 20000);
         if(!info) throw new Error('查無此股票代號');
         if(info.name) nameEl.value=info.name;
-        lookupStatus.textContent = info.name ? `已找到：${info.name}` : '已找到股票資料';
+        const categoryEl = root.querySelector('#holdingCategory');
+        if(categoryEl) categoryEl.value = inferStockCategory(info, symbol, info.name || nameEl.value);
+        lookupStatus.textContent = info.name
+          ? `已找到：${info.name}｜已自動分類為${categoryEl && categoryEl.value==='etf' ? ' ETF' : '個股'}`
+          : '已找到股票資料';
       }catch(err){
         lookupStatus.textContent = err && err.message ? err.message : '股票資料查詢失敗，請稍後再試。';
       }finally{
@@ -2476,6 +2497,57 @@ function openHoldingModal(){
       saveState();
       closeModal();
       currentTab='holdings';
+      render();
+    });
+  });
+}
+
+
+function openEditHoldingModal(accountId, symbol){
+  const {holdings} = computeHoldingsAsOf(accountId, todayStr());
+  const h = holdings.find(x=>x.symbol===symbol);
+  if(!h){ stampToast('找不到庫存資料', true); return; }
+
+  const body = `
+  <form id="editHoldingForm">
+    <div class="form-row">
+      <label>股票</label>
+      <div class="paper-note"><strong>${esc(h.symbol)}</strong> ${esc(h.name||'')}</div>
+    </div>
+    <div class="form-grid2">
+      <div class="form-row">
+        <label>股數</label>
+        <input type="number" id="editHoldingShares" min="0" step="1" required value="${Number(h.shares)||0}">
+      </div>
+      <div class="form-row">
+        <label>平均成本</label>
+        <input type="number" id="editHoldingAvgCost" min="0" step="0.01" required value="${Number(h.avgCost||0).toFixed(2)}">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>類別</label>
+      <select id="editHoldingCategory">
+        <option value="stock" ${h.category==='stock'?'selected':''}>個股</option>
+        <option value="etf" ${h.category==='etf'?'selected':''}>ETF</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">儲存修改</button>
+    </div>
+  </form>`;
+
+  openModal('修改庫存', body, root=>{
+    root.querySelector('#editHoldingForm').addEventListener('submit', e=>{
+      e.preventDefault();
+      const shares = Math.max(0, parseFloat(root.querySelector('#editHoldingShares').value)||0);
+      const avgCost = Math.max(0, parseFloat(root.querySelector('#editHoldingAvgCost').value)||0);
+      const category = root.querySelector('#editHoldingCategory').value;
+      upsertManualHolding(accountId, symbol, h.name||symbol, category, shares, avgCost);
+      const meta = ensureMeta(accountId, symbol, h.name||symbol, category);
+      meta.category = category;
+      saveState();
+      closeModal();
       render();
     });
   });
@@ -2956,21 +3028,9 @@ document.addEventListener('click', (e)=>{
     case 'add-account': openAccountModal(); break;
     case 'edit-account': openAccountModal(btn.dataset.id); break;
     case 'open-holding': openHoldingModal(); break;
-    case 'save-holding': {
-      const accid = btn.dataset.accid;
-      const symbol = btn.dataset.symbol;
-      const shareInput = document.querySelector(`.holding-shares-input[data-accid="${accid}"][data-symbol="${CSS.escape(symbol)}"]`);
-      const avgInput = document.querySelector(`.holding-avg-input[data-accid="${accid}"][data-symbol="${CSS.escape(symbol)}"]`);
-      const {holdings} = computeHoldingsAsOf(accid, todayStr());
-      const current = holdings.find(h=>h.symbol===symbol);
-      if(!current || !shareInput || !avgInput){ stampToast('找不到庫存資料', true); break; }
-      const shares = Math.max(0, parseFloat(shareInput.value)||0);
-      const avgCost = Math.max(0, parseFloat(avgInput.value)||0);
-      upsertManualHolding(accid, symbol, current.name||symbol, current.category||'stock', shares, avgCost);
-      saveState();
-      render();
+    case 'edit-holding':
+      openEditHoldingModal(btn.dataset.accid, btn.dataset.symbol);
       break;
-    }
     case 'open-dividend': openDividendModal(); break;
     case 'edit-dividend': openDividendModal(btn.dataset.id); break;
     case 'delete-dividend':
