@@ -1545,7 +1545,7 @@ function renderDashboardCharts(){
     });
     const legend=rows.map((r,i)=>{
       const pct=values[i]/total;
-      return `<div class="native-legend-item"><span class="native-legend-dot" style="background:${colors[i%colors.length]}"></span><span><strong>${esc(r.symbol)}</strong> ${esc(r.name||'')} <span class="native-legend-pct">${(pct*100).toFixed(1)}%</span></span></div>`;
+      return `<div class="native-legend-item"><span class="native-legend-dot" style="background:${colors[i%colors.length]}"></span><span><strong>${esc(r.symbol)}</strong> ${esc(r.name||'')} <span class="native-legend-pct">${(pct*100).toFixed(1)}% · ${fmtMoney(values[i])}</span></span></div>`;
     }).join('');
     return `<div class="native-donut-wrap">
       <svg class="native-donut-svg" viewBox="0 0 160 160" role="img" aria-label="持股市值配置">
