@@ -389,6 +389,53 @@
   .native-chart-svg{height:180px}
 }
 
+
+/* ===== v10：投資成本 ===== */
+.capital-summary-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:10px;
+  margin:4px 0 16px;
+}
+.capital-summary-item{
+  border:1px solid var(--paper-line);
+  background:rgba(255,255,255,.46);
+  border-radius:10px;
+  padding:11px 13px;
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.capital-summary-item span{font-size:11.5px;color:var(--ink-soft);}
+.capital-summary-item strong{font-size:17px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+.panel-note{font-size:11.5px;color:var(--ink-soft);margin:-4px 0 12px;}
+.capital-flow-table{width:max-content!important;min-width:100%;table-layout:auto!important;}
+.capital-flow-table th,.capital-flow-table td{padding:7px 8px!important;white-space:nowrap;}
+.capital-flow-table th:nth-child(1),.capital-flow-table td:nth-child(1){width:100px!important;}
+.capital-flow-table th:nth-child(2),.capital-flow-table td:nth-child(2){width:88px!important;}
+.capital-flow-table th:nth-child(3),.capital-flow-table td:nth-child(3){width:115px!important;}
+.capital-modal-summary{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:8px;
+  margin:0 0 14px;
+}
+.capital-modal-summary>div{
+  border:1px solid var(--paper-line);
+  border-radius:8px;
+  padding:9px 10px;
+  background:rgba(255,255,255,.4);
+}
+.capital-modal-summary span{display:block;font-size:11px;color:var(--ink-soft);margin-bottom:3px;}
+.capital-modal-summary strong{font-size:14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
+@media(max-width:700px){
+  .capital-summary-grid,.capital-modal-summary{grid-template-columns:1fr;gap:6px;}
+  .capital-summary-item{padding:9px 11px;}
+  .capital-flow-table th:nth-child(1),.capital-flow-table td:nth-child(1){width:88px!important;}
+  .capital-flow-table th:nth-child(2),.capital-flow-table td:nth-child(2){width:76px!important;}
+  .capital-flow-table th:nth-child(3),.capital-flow-table td:nth-child(3){width:102px!important;}
+}
+
 </style>
 </head>
 <body>
@@ -427,6 +474,7 @@
       <button data-tab="transactions">交易紀錄</button>
       <button data-tab="dividends">配息紀錄</button>
       <button data-tab="holdings">庫存股票</button>
+      <button data-tab="investment-cost">投資成本</button>
       <button data-tab="repayment">還款紀錄</button>
     </nav>
 
@@ -458,6 +506,7 @@ function defaultState(){
     priceLogs: [],        // {id, date, symbol, price}
     holdingsMeta: [],     // {id, accountId, symbol, name, category, freq, expectedDate, note}
     fundLogs: [],          // {id, accountId, date, ownAmount, marginAmount, note} - manually-entered snapshot of capital invested vs borrowed
+    capitalFlowLogs: [],   // {id, accountId, date, type:'deposit'|'withdraw', amount, note} - investment capital in/out
     repaymentLogs: [],     // {id, accountId, date, amount, note} - manually-entered per-period loan repayment record
     dailyPLLogs: []        // {id, accountId, date, type:'profit'|'loss', amount, note} - manually-entered daily gain/loss, independent of computed holdings
   };
@@ -1147,6 +1196,22 @@ function repaymentLogsForAccount(accountId){
   if(accountId==='all') return state.repaymentLogs.slice().sort((a,b)=> b.date.localeCompare(a.date));
   return state.repaymentLogs.filter(r=>r.accountId===accountId).sort((a,b)=> b.date.localeCompare(a.date));
 }
+
+function capitalFlowsForAccount(accountId, asOfDate){
+  const cutoff = asOfDate || '9999-12-31';
+  const rows = state.capitalFlowLogs.filter(r=>r.date<=cutoff && (accountId==='all' || r.accountId===accountId));
+  return rows.slice().sort((a,b)=> b.date.localeCompare(a.date) || String(b.id).localeCompare(String(a.id)));
+}
+function capitalFlowStats(accountId, asOfDate){
+  const rows = capitalFlowsForAccount(accountId, asOfDate || todayStr());
+  let deposits=0, withdrawals=0;
+  rows.forEach(r=>{
+    const amount = Math.abs(Number(r.amount)||0);
+    if(r.type==='withdraw') withdrawals += amount;
+    else deposits += amount;
+  });
+  return {deposits, withdrawals, net:deposits-withdrawals, count:rows.length};
+}
 function totalRepaid(accountId){
   return repaymentLogsForAccount(accountId).reduce((s,r)=>s+(r.amount||0),0);
 }
@@ -1174,9 +1239,10 @@ function computeDashboard(accountId){
   const divs = divForAccount(accountId);
   const totalDiv = divs.reduce((s,d)=>s+(d.total||0),0);
   const fundStatus = fundStatusFor(accountId, todayStr());
+  const capitalStats = capitalFlowStats(accountId, todayStr());
   const totalPL = cumRealizedPL + totalUnreal + totalDiv;
   const returnOnOwn = (fundStatus && fundStatus.ownAmount>0) ? totalPL/fundStatus.ownAmount : null;
-  return {rows, totalMV, totalCost, totalUnreal, cumRealizedPL, totalDiv, fundStatus, totalPL, returnOnOwn, totalRepaid: totalRepaid(accountId)};
+  return {rows, totalMV, totalCost, totalUnreal, cumRealizedPL, totalDiv, fundStatus, capitalStats, totalPL, returnOnOwn, totalRepaid: totalRepaid(accountId)};
 }
 
 function computeEquityCurve(accountId){
@@ -1302,6 +1368,7 @@ function renderDashboardSummary(){
         </div>
         <div class="dash-value" style="font-size:15px;">${d.fundStatus?fmtMoney(d.fundStatus.ownAmount):'—'} <span style="color:var(--ink-soft);font-size:12px;">/</span> ${d.fundStatus?fmtMoney(d.fundStatus.marginAmount):'—'}</div>
         <div class="dash-sub">${d.fundStatus? '總損益對自有資金報酬率（估算）'+fmtPct(d.returnOnOwn) : '尚未記錄資金狀況'}</div>
+        <div class="dash-sub">投資成本淨投入 ${fmtMoney(d.capitalStats.net)}（投入 ${fmtMoney(d.capitalStats.deposits)}／提領 ${fmtMoney(d.capitalStats.withdrawals)}）</div>
         <div class="dash-sub">累計已還款 ${fmtMoney(d.totalRepaid)}</div>
       </div>
     </div>
@@ -1555,6 +1622,57 @@ function renderDividendsPanel(){
   </table></div>`;
 }
 
+
+/* ============================= PANEL: INVESTMENT COST ============================= */
+function renderInvestmentCostPanel(){
+  if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
+  const accId = state.activeAccountId;
+  const logs = capitalFlowsForAccount(accId, todayStr());
+  const stats = capitalFlowStats(accId, todayStr());
+
+  const toolsHtml = `<div class="panel-tools">
+    <button class="btn-stamp" data-action="open-capital-flow">＋ 新增資金紀錄</button>
+  </div>`;
+
+  const summary = `<div class="capital-summary-grid">
+    <div class="capital-summary-item"><span>累計投入</span><strong>${fmtMoney(stats.deposits)}</strong></div>
+    <div class="capital-summary-item"><span>累計提領</span><strong>${fmtMoney(stats.withdrawals)}</strong></div>
+    <div class="capital-summary-item"><span>淨投入資金</span><strong class="${plClass(stats.net)}">${fmtMoney(stats.net)}</strong></div>
+  </div>`;
+
+  if(logs.length===0){
+    return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
+      <p class="panel-note">記錄實際匯入證券帳戶的資金與從帳戶提領的資金；淨投入＝累計投入－累計提領。</p>
+      ${summary}
+      <div class="card empty-state"><div class="glyph">💰</div><p>尚無投入或提領紀錄。</p>
+      <button class="btn-stamp" data-action="open-capital-flow">＋ 新增第一筆資金紀錄</button></div>`;
+  }
+
+  const rowsHtml = logs.map(r=>{
+    const acc = accountById(r.accountId);
+    const isDeposit = r.type!=='withdraw';
+    return `<tr>
+      <td class="mono">${r.date}</td>
+      <td><span class="badge ${isDeposit?'badge-buy':'badge-sell'}">${isDeposit?'投入資金':'提領資金'}</span></td>
+      <td class="num" style="font-weight:700;">${isDeposit?'+':'−'}${fmtMoney(Math.abs(r.amount||0))}</td>
+      ${activeIsAll()?`<td><span class="acc-chip"><span class="dot" style="background:${acc?acc.color:'#999'}"></span>${esc(acc?acc.name:'')}</span></td>`:''}
+      <td style="font-size:11.5px;color:var(--ink-soft);">${esc(r.note||'')}</td>
+      <td>
+        <button class="btn-icon" data-action="edit-capital-flow" data-id="${r.id}" title="編輯">✎</button>
+        <button class="btn-icon" data-action="delete-capital-flow" data-id="${r.id}" title="刪除">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="panel-head"><h3>投資成本</h3>${toolsHtml}</div>
+    <p class="panel-note">記錄實際匯入證券帳戶的資金與從帳戶提領的資金；淨投入＝累計投入－累計提領。此統計會同步顯示在「自有／借貸資金」區塊。</p>
+    ${summary}
+    <div class="ledger-wrap"><table class="compact-record-table capital-flow-table">
+      <thead><tr><th>日期</th><th>類型</th><th class="num">金額</th>${activeIsAll()?'<th>帳戶</th>':''}<th>備註</th><th>操作</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+    </table></div>`;
+}
+
 /* ============================= PANEL: REPAYMENT LOG ============================= */
 function renderRepaymentPanel(){
   if(state.accounts.length===0) return `<div class="empty-state">請先新增帳戶。</div>`;
@@ -1675,6 +1793,7 @@ function renderPanel(){
   if(currentTab==='holdings') root.innerHTML = renderHoldingsPanel();
   else if(currentTab==='transactions') root.innerHTML = renderTransactionsPanel();
   else if(currentTab==='dividends') root.innerHTML = renderDividendsPanel();
+  else if(currentTab==='investment-cost') root.innerHTML = renderInvestmentCostPanel();
   else if(currentTab==='repayment') root.innerHTML = renderRepaymentPanel();
   else if(currentTab==='daily') root.innerHTML = renderDailyPanel();
 
@@ -2349,10 +2468,82 @@ function openSyncModal(){
   });
 }
 
+
+/* ============================= MODALS: INVESTMENT COST ============================= */
+function openCapitalFlowModal(editId){
+  const editing = editId ? state.capitalFlowLogs.find(r=>r.id===editId) : null;
+  const fixedAccount = activeIsAll() ? null : state.activeAccountId;
+  const selectedAccount = editing ? editing.accountId : (fixedAccount || (state.accounts[0] && state.accounts[0].id));
+  const type = editing ? editing.type : 'deposit';
+
+  const body = `
+  <form id="capitalFlowForm">
+    ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-grid2">
+      <div class="form-row"><label>日期</label><input type="date" id="capitalDate" value="${editing?editing.date:todayStr()}" required></div>
+      <div class="form-row"><label>類型</label>
+        <select id="capitalType">
+          <option value="deposit" ${type==='deposit'?'selected':''}>投入資金</option>
+          <option value="withdraw" ${type==='withdraw'?'selected':''}>提領資金</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row"><label>金額</label><input type="number" step="1" min="0" id="capitalAmount" value="${editing?Math.abs(editing.amount||0):''}" placeholder="例如 100000" required></div>
+    <div class="form-row"><label>備註</label><input type="text" id="capitalNote" value="${editing?esc(editing.note||''):''}" placeholder="選填，例如首次投入、追加資金、提領獲利"></div>
+    <div class="form-hint">「投入資金」增加淨投入；「提領資金」減少淨投入。股票買賣本身不需要在此重複記錄。</div>
+    <div class="modal-actions">
+      ${editing?`<button type="button" class="btn-danger" id="capitalDeleteBtn" style="margin-right:auto;">刪除</button>`:''}
+      <button type="button" class="btn-secondary" data-action="close-modal">取消</button>
+      <button type="submit" class="btn-stamp">${editing?'儲存變更':'新增紀錄'}</button>
+    </div>
+  </form>`;
+
+  openModal(editing?'編輯投資成本':'新增投資成本', body, (root)=>{
+    root.querySelector('#capitalFlowForm').addEventListener('submit', (e)=>{
+      e.preventDefault();
+      const accountId = fixedAccount || root.querySelector('.modal-body select').value;
+      const date = root.querySelector('#capitalDate').value;
+      const flowType = root.querySelector('#capitalType').value;
+      const amount = Math.abs(parseFloat(root.querySelector('#capitalAmount').value)||0);
+      const note = root.querySelector('#capitalNote').value.trim();
+      if(!accountId){ stampToast('請先新增帳戶', true); return; }
+      if(amount<=0){ stampToast('請輸入金額', true); return; }
+      if(editing){
+        Object.assign(editing, {accountId, date, type:flowType, amount, note});
+      }else{
+        state.capitalFlowLogs.push({id:uid(), accountId, date, type:flowType, amount, note});
+      }
+      saveState();
+      closeModal();
+      currentTab='investment-cost';
+      render();
+    });
+    if(editing){
+      root.querySelector('#capitalDeleteBtn').addEventListener('click', ()=>{
+        closeModal();
+        confirmAction('確定要刪除這筆投資成本紀錄嗎？', ()=>{
+          state.capitalFlowLogs = state.capitalFlowLogs.filter(r=>r.id!==editing.id);
+          saveState();
+          render();
+        });
+      });
+    }
+  });
+}
+
 /* ============================= MODALS: FUND STATUS LOG ============================= */
 function openFundLogModal(preselectAccount){
   const fixedAccount = activeIsAll() ? null : state.activeAccountId;
   let selectedAccount = preselectAccount || fixedAccount || (state.accounts[0] && state.accounts[0].id);
+
+  function capitalSummaryHtml(accId){
+    const s = capitalFlowStats(accId, todayStr());
+    return `<div class="capital-modal-summary">
+      <div><span>累計投入</span><strong>${fmtMoney(s.deposits)}</strong></div>
+      <div><span>累計提領</span><strong>${fmtMoney(s.withdrawals)}</strong></div>
+      <div><span>淨投入</span><strong>${fmtMoney(s.net)}</strong></div>
+    </div>`;
+  }
 
   function historyHtml(accId){
     const logs = fundLogsForAccount(accId);
@@ -2371,6 +2562,8 @@ function openFundLogModal(preselectAccount){
 
   const body = `
     ${fixedAccount?'':`<div class="form-row"><label>帳戶</label>${accountSelectHtml(selectedAccount)}</div>`}
+    <div class="form-hint" style="margin-bottom:7px;">投資成本統計（來自「投資成本」頁面）</div>
+    <div id="fundCapitalSummaryWrap">${capitalSummaryHtml(selectedAccount)}</div>
     <div id="fundHistoryWrap">${historyHtml(selectedAccount)}</div>
     <form id="fundLogForm">
       <div class="form-grid2">
@@ -2409,6 +2602,7 @@ function openFundLogModal(preselectAccount){
     if(realAccSel){
       realAccSel.addEventListener('change', ()=>{
         selectedAccount = realAccSel.value;
+        root.querySelector('#fundCapitalSummaryWrap').innerHTML = capitalSummaryHtml(selectedAccount);
         root.querySelector('#fundHistoryWrap').innerHTML = historyHtml(selectedAccount);
         bindDeleteButtons();
       });
@@ -2541,6 +2735,14 @@ document.addEventListener('click', (e)=>{
     case 'delete-dividend':
       confirmAction('確定要刪除這筆配息紀錄嗎？', ()=>{
         state.dividends = state.dividends.filter(d=>d.id!==btn.dataset.id);
+        saveState(); render();
+      });
+      break;
+    case 'open-capital-flow': openCapitalFlowModal(); break;
+    case 'edit-capital-flow': openCapitalFlowModal(btn.dataset.id); break;
+    case 'delete-capital-flow':
+      confirmAction('確定要刪除這筆投資成本紀錄嗎？', ()=>{
+        state.capitalFlowLogs = state.capitalFlowLogs.filter(r=>r.id!==btn.dataset.id);
         saveState(); render();
       });
       break;
