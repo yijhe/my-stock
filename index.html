@@ -441,6 +441,8 @@
 
 
 /* v17：庫存股數/均價改由修改視窗編輯，新增庫存查詢後自動分類 */
+
+/* v18：TPEx 雙端點行情備援，補強 00950B 等含英文字母債券 ETF */
 </style>
 </head>
 <body>
@@ -797,18 +799,34 @@ function normalizeTpexRows(rows, byCode){
   let count = 0;
   rows.forEach(r=>{
     const code = String(
-      r.SecuritiesCompanyCode || r.Code || r.CompanyCode || r.SecurityCode || r.CommonStock || ''
+      r.SecuritiesCompanyCode || r.SecuritiesCode || r.Code || r.CompanyCode ||
+      r.SecurityCode || r.CommonStock || r.StockNo || r.Symbol || ''
     ).trim().toUpperCase();
     if(!code) return;
+
     const name = String(
-      r.CompanyName || r.Name || r.CommonName || r.SecuritiesName || r.CodeName || ''
+      r.CompanyName || r.SecuritiesCompanyName || r.SecuritiesName || r.Name ||
+      r.CommonName || r.CodeName || r.StockName || ''
     ).trim();
+
     const close = numOrNull(
       r.Close != null ? r.Close :
-      (r.ClosingPrice != null ? r.ClosingPrice : r.Close_Price)
+      r.ClosingPrice != null ? r.ClosingPrice :
+      r.Close_Price != null ? r.Close_Price :
+      r.LastPrice != null ? r.LastPrice :
+      r.TradePrice != null ? r.TradePrice :
+      r.Price
     );
-    const date = parseMarketDate(r.Date || r.date);
-    byCode[code] = {name, close, date, market:'上櫃'};
+
+    const date = parseMarketDate(r.Date || r.TradeDate || r.DataDate || r.date);
+
+    const prev = byCode[code];
+    byCode[code] = {
+      name: name || (prev && prev.name) || code,
+      close: close != null ? close : (prev ? prev.close : null),
+      date: date || (prev && prev.date) || null,
+      market:'上櫃'
+    };
     count++;
   });
   if(count===0) throw new Error('TPEx 無有效股票資料');
@@ -825,9 +843,10 @@ async function fetchTaiwanMarketSnapshot(forceRefresh=false){
     const status = {twse:false, tpex:false};
     const errors = {twse:'', tpex:''};
 
-    const [twseRes, tpexRes] = await Promise.allSettled([
+    const [twseRes, tpexDailyRes, tpexQuotesRes] = await Promise.allSettled([
       fetchMarketJson('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'),
-      fetchMarketJson('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes')
+      fetchMarketJson('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes'),
+      fetchMarketJson('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes')
     ]);
 
     if(twseRes.status==='fulfilled'){
@@ -841,16 +860,33 @@ async function fetchTaiwanMarketSnapshot(forceRefresh=false){
       errors.twse = twseRes.reason && twseRes.reason.message ? twseRes.reason.message : String(twseRes.reason);
     }
 
-    if(tpexRes.status==='fulfilled'){
+    const tpexErrors = [];
+
+    if(tpexDailyRes.status==='fulfilled'){
       try{
-        normalizeTpexRows(tpexRes.value, byCode);
+        normalizeTpexRows(tpexDailyRes.value, byCode);
         status.tpex = true;
       }catch(e){
-        errors.tpex = e.message || String(e);
+        tpexErrors.push(e.message || String(e));
       }
     }else{
-      errors.tpex = tpexRes.reason && tpexRes.reason.message ? tpexRes.reason.message : String(tpexRes.reason);
+      tpexErrors.push(tpexDailyRes.reason && tpexDailyRes.reason.message ? tpexDailyRes.reason.message : String(tpexDailyRes.reason));
     }
+
+    // 第二個官方 TPEx 收盤行情端點作為備援。
+    // 對 00950B 這類含英文字母的上櫃債券 ETF，可避免單一端點缺值時抓不到收盤價。
+    if(tpexQuotesRes.status==='fulfilled'){
+      try{
+        normalizeTpexRows(tpexQuotesRes.value, byCode);
+        status.tpex = true;
+      }catch(e){
+        tpexErrors.push(e.message || String(e));
+      }
+    }else{
+      tpexErrors.push(tpexQuotesRes.reason && tpexQuotesRes.reason.message ? tpexQuotesRes.reason.message : String(tpexQuotesRes.reason));
+    }
+
+    if(tpexErrors.length) errors.tpex = tpexErrors.join('；');
 
     if(!status.twse && !status.tpex){
       throw new Error('證交所與櫃買中心目前都無法連線。若你是直接開啟本機 HTML，可能是瀏覽器的 CORS / 網路限制；仍可手動輸入股票名稱與成交價。');
@@ -1214,7 +1250,7 @@ async function lookupStockInfo(symbol, dateIso){
 
   // 只有兩個市場都成功回應，才有資格明確說「查無代號」。
   if(snap.status.twse && snap.status.tpex){
-    return {ok:false, reason:'查無此股票代號（目前涵蓋上市／上櫃普通股票及 ETF）'};
+    return {ok:false, reason:'查無此股票代號（目前涵蓋上市／上櫃股票、ETF 與債券 ETF）'};
   }
 
   const unavailable = [];
