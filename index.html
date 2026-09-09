@@ -443,6 +443,8 @@
 /* v17：庫存股數/均價改由修改視窗編輯，新增庫存查詢後自動分類 */
 
 /* v18：TPEx 雙端點行情備援，補強 00950B 等含英文字母債券 ETF */
+
+/* v19：庫存股票新增刪除功能 */
 </style>
 </head>
 <body>
@@ -1712,6 +1714,7 @@ function renderHoldingsPanel(){
         <button class="btn-icon" data-action="edit-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="修改股數與均價">✎</button>
         <button class="btn-icon" data-action="update-price" data-symbol="${esc(r.symbol)}" title="更新價格">💲</button>
         <button class="btn-icon" data-action="edit-meta" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="編輯股票資訊">⚙</button>
+        <button class="btn-icon" data-action="delete-holding" data-accid="${r.accountId}" data-symbol="${esc(r.symbol)}" title="刪除庫存">🗑</button>
       </td>
     </tr>`;
   }).join('');
@@ -3067,6 +3070,34 @@ document.addEventListener('click', (e)=>{
     case 'edit-holding':
       openEditHoldingModal(btn.dataset.accid, btn.dataset.symbol);
       break;
+
+    case 'delete-holding': {
+      const accid = btn.dataset.accid;
+      const symbol = btn.dataset.symbol;
+      const {holdings} = computeHoldingsAsOf(accid, todayStr());
+      const h = holdings.find(x=>x.symbol===symbol);
+      const label = h ? `${h.symbol} ${h.name||''}`.trim() : symbol;
+
+      confirmAction(`確定要刪除庫存「${label}」嗎？\n\n這只會刪除目前庫存資料，不會刪除每日盈虧、配息或股價歷史紀錄。`, ()=>{
+        state.manualHoldings = state.manualHoldings.filter(x=>!(x.accountId===accid && x.symbol===symbol));
+
+        const hasLegacyTx = state.transactions.some(x=>x.accountId===accid && x.symbol===symbol);
+        if(hasLegacyTx){
+          upsertManualHolding(
+            accid,
+            symbol,
+            h && h.name ? h.name : symbol,
+            h && h.category ? h.category : 'stock',
+            0,
+            0
+          );
+        }
+
+        saveState();
+        render();
+      });
+      break;
+    }
     case 'open-dividend': openDividendModal(); break;
     case 'edit-dividend': openDividendModal(btn.dataset.id); break;
     case 'delete-dividend':
